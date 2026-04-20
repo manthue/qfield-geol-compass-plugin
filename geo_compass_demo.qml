@@ -102,7 +102,29 @@ Item {
       return clampPositiveAngle(info.imuRoll);
     }
 
+    if (info.imuSteeringValid) {
+      return clampPositiveAngle(info.imuSteering);
+    }
+
     return NaN;
+  }
+
+  function tiltSensorLabel() {
+    const info = currentPositionInfo();
+
+    if (info.imuPitchValid) {
+      return "pitch";
+    }
+
+    if (info.imuRollValid) {
+      return "roll";
+    }
+
+    if (info.imuSteeringValid) {
+      return "steering";
+    }
+
+    return "none";
   }
 
   function freezeMeasurement() {
@@ -115,7 +137,7 @@ Item {
     }
 
     if (isNaN(tilt)) {
-      iface.mainWindow().displayToast("No valid tilt value available");
+      iface.mainWindow().displayToast("No valid tilt value available from pitch, roll, or steering sensors");
       return;
     }
 
@@ -415,7 +437,7 @@ Item {
     }
 
     if (isNaN(tilt)) {
-      iface.mainWindow().displayToast("No valid tilt value available");
+      iface.mainWindow().displayToast("No valid tilt value available from pitch, roll, or steering sensors");
       return;
     }
 
@@ -513,7 +535,7 @@ Item {
 
     parts.push(info.isValid ? "GNSS ready" : "GNSS unavailable");
     parts.push(isNaN(liveHeading) ? "Compass unavailable" : "Compass ready");
-    parts.push(isNaN(liveTilt) ? "Tilt unavailable" : "Tilt ready");
+    parts.push(isNaN(liveTilt) ? "Tilt unavailable" : "Tilt ready (" + tiltSensorLabel() + ")");
     parts.push(measurementFrozen ? "Locked" : "Live");
 
     return parts.join(" | ");
