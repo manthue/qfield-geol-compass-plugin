@@ -205,7 +205,7 @@ Item {
 
     let allLayers = null;
     try {
-      allLayers = qgisProject.mapLayers();
+      allLayers = ProjectUtils.mapLayers(qgisProject);
     } catch (error) {
       allLayers = null;
     }
@@ -236,16 +236,81 @@ Item {
     };
   }
 
+  function memoryLayerUri() {
+    let crsAuthId = "EPSG:4326";
+    try {
+      if (qgisProject && qgisProject.crs && qgisProject.crs.authid) {
+        crsAuthId = qgisProject.crs.authid;
+      }
+    } catch (error) {
+      crsAuthId = "EPSG:4326";
+    }
+
+    return "Point"
+      + "?crs=" + encodeURIComponent(crsAuthId)
+      + "&field=mode:string(16)"
+      + "&field=trend:double"
+      + "&field=plunge:double"
+      + "&field=dip_dir:double"
+      + "&field=dip_ang:double"
+      + "&field=kind:string(16)"
+      + "&field=structure:string(64)"
+      + "&field=type:string(64)"
+      + "&field=Geology:string(80)"
+      + "&field=azimuth:double"
+      + "&field=tilt:double"
+      + "&field=sensor:string(32)"
+      + "&field=created_utc:string(40)"
+      + "&field=Locality:string(120)"
+      + "&field=Comment:string(255)"
+      + "&field=notes:string(255)"
+      + "&field=lat_wgs84:double"
+      + "&field=lon_wgs84:double"
+      + "&index=yes";
+  }
+
+  function createMeasurementLayer() {
+    const createdLayer = LayerUtils.loadVectorLayer(
+      memoryLayerUri(),
+      measurementLayerName,
+      "memory"
+    );
+
+    if (!createdLayer) {
+      return {
+        layer: null,
+        message: "QField could not create a temporary measurement layer."
+      };
+    }
+
+    if (!ProjectUtils.addMapLayer(qgisProject, createdLayer)) {
+      return {
+        layer: null,
+        message: "QField created a layer but could not add it to the current project."
+      };
+    }
+
+    return {
+      layer: createdLayer,
+      message: ""
+    };
+  }
+
   function showAlert(message) {
     noticeDialog.text = message;
     noticeDialog.open();
+  }
+
+  function showCreateLayerPrompt(message) {
+    createLayerDialog.text = message;
+    createLayerDialog.open();
   }
 
   function openCompassFromMap() {
     const result = findCompatibleMeasurementLayer();
 
     if (!result.layer) {
-      showAlert(result.message);
+      showCreateLayerPrompt(result.message);
       return;
     }
 
@@ -257,6 +322,22 @@ Item {
 
   function closeCompass() {
     compassVisible = false;
+  }
+
+  function createLayerAndOpenCompass() {
+    createLayerDialog.close();
+
+    const creation = createMeasurementLayer();
+    if (!creation.layer) {
+      showAlert(creation.message);
+      return;
+    }
+
+    targetMeasurementLayer = creation.layer;
+    measurementLayerName = creation.layer.name;
+    compassVisible = true;
+    seedTypeForMode();
+    iface.mainWindow().displayToast("Temporary measurement layer created");
   }
 
   function currentGeometry() {
@@ -467,6 +548,27 @@ Item {
       text: noticeDialog.text
       wrapMode: Text.WordWrap
       width: 280
+      color: root.textPrimary
+    }
+  }
+
+  Dialog {
+    id: createLayerDialog
+    parent: iface.mainWindow().contentItem
+    modal: true
+    visible: false
+    title: "Create measurement layer?"
+
+    property string text: ""
+
+    standardButtons: Dialog.Ok | Dialog.Cancel
+
+    onAccepted: root.createLayerAndOpenCompass()
+
+    contentItem: Label {
+      text: createLayerDialog.text + "\n\nCreate a temporary point layer in this project now?"
+      wrapMode: Text.WordWrap
+      width: 300
       color: root.textPrimary
     }
   }
