@@ -153,6 +153,19 @@ Item {
       + orientationValue;
   }
 
+  function sensorDebugMultilineLabel() {
+    const info = currentPositionInfo();
+    const orientationValue = !isNaN(iface.positioning().orientation)
+      ? Math.round(normalizeAzimuth(iface.positioning().orientation)) + "\u00b0"
+      : "--";
+
+    return "Heading: " + formatSensorValue(info.imuHeadingValid, info.imuHeading)
+      + "    Orientation: " + orientationValue
+      + "\nPitch: " + formatSensorValue(info.imuPitchValid, info.imuPitch)
+      + "    Roll: " + formatSensorValue(info.imuRollValid, info.imuRoll)
+      + "    Steering: " + formatSensorValue(info.imuSteeringValid, info.imuSteering);
+  }
+
   function freezeMeasurement() {
     const heading = liveHeading;
     const tilt = liveTilt;
@@ -1316,6 +1329,41 @@ Item {
             text: "Target layer: " + measurementLayerName
             color: textMuted
             font.pixelSize: 12
+          }
+
+          Rectangle {
+            width: 330
+            radius: 10
+            color: "#efeee9"
+            border.color: "#d2d0c7"
+            border.width: 1
+            anchors.horizontalCenter: parent.horizontalCenter
+            implicitHeight: sensorDebugColumn.implicitHeight + 16
+
+            Column {
+              id: sensorDebugColumn
+              width: parent.width - 20
+              anchors.centerIn: parent
+              spacing: 4
+
+              Text {
+                width: parent.width
+                text: "Sensor debug"
+                color: textPrimary
+                font.pixelSize: 15
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+              }
+
+              Text {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                text: sensorDebugMultilineLabel()
+                color: textPrimary
+                font.pixelSize: 14
+              }
+            }
           }
 
           Text {
