@@ -1,6 +1,6 @@
 [general]
 name=Geo Compass
-version=0.3.3
+version=0.3.4
 description=Capture linear and planar structural measurements in QField using Android device orientation sensors.
 author=OpenAI Codex
 homepage=https://github.com/manthue/qfield-geol-compass-plugin
