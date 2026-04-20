@@ -8,8 +8,10 @@ Item {
   id: root
 
   property string measurementLayerName: "geology_measurements"
+  property var targetMeasurementLayer: null
   property string activeMode: "planar"
   property bool measurementFrozen: false
+  property bool compassVisible: false
   property real frozenHeading: NaN
   property real frozenTilt: NaN
 
@@ -137,6 +139,126 @@ Item {
     return matches[0];
   }
 
+  function layerGeometryTypeValue(layer) {
+    if (!layer) {
+      return -1;
+    }
+
+    if (layer.geometryType === undefined || layer.geometryType === null) {
+      return -1;
+    }
+
+    return Number(layer.geometryType);
+  }
+
+  function isPointLayer(layer) {
+    const geometryType = layerGeometryTypeValue(layer);
+    return geometryType === -1 || geometryType === 0;
+  }
+
+  function missingRequiredFields(layer) {
+    const requiredFields = ["mode", "trend", "plunge", "dip_dir", "dip_ang"];
+    let missing = [];
+
+    for (let i = 0; i < requiredFields.length; ++i) {
+      const fieldName = requiredFields[i];
+      if (!fieldExists(layer, fieldName)) {
+        missing.push(fieldName);
+      }
+    }
+
+    return missing;
+  }
+
+  function compatibleLayerMessage(layer, missing) {
+    if (!layer) {
+      return "No compatible point layer was found. Add an editable point layer with fields mode, trend, plunge, dip_dir, and dip_ang.";
+    }
+
+    if (!isPointLayer(layer)) {
+      return "Layer '" + layer.name + "' is not a point layer.";
+    }
+
+    if (LayerUtils.isFeatureAdditionLocked(layer)) {
+      return "Layer '" + layer.name + "' is not editable for adding features.";
+    }
+
+    if (missing.length > 0) {
+      return "Layer '" + layer.name + "' is missing required fields: " + missing.join(", ");
+    }
+
+    return "";
+  }
+
+  function findCompatibleMeasurementLayer() {
+    const preferredLayer = layerByName(measurementLayerName);
+    if (preferredLayer) {
+      const preferredMissing = missingRequiredFields(preferredLayer);
+      const preferredMessage = compatibleLayerMessage(preferredLayer, preferredMissing);
+      if (preferredMessage.length === 0) {
+        return {
+          layer: preferredLayer,
+          message: ""
+        };
+      }
+    }
+
+    let allLayers = null;
+    try {
+      allLayers = qgisProject.mapLayers();
+    } catch (error) {
+      allLayers = null;
+    }
+    if (allLayers) {
+      for (let key in allLayers) {
+        const layer = allLayers[key];
+        const missing = missingRequiredFields(layer);
+        const message = compatibleLayerMessage(layer, missing);
+        if (message.length === 0) {
+          return {
+            layer: layer,
+            message: ""
+          };
+        }
+      }
+    }
+
+    if (preferredLayer) {
+      return {
+        layer: null,
+        message: compatibleLayerMessage(preferredLayer, missingRequiredFields(preferredLayer))
+      };
+    }
+
+    return {
+      layer: null,
+      message: compatibleLayerMessage(null, [])
+    };
+  }
+
+  function showAlert(message) {
+    noticeDialog.text = message;
+    noticeDialog.open();
+  }
+
+  function openCompassFromMap() {
+    const result = findCompatibleMeasurementLayer();
+
+    if (!result.layer) {
+      showAlert(result.message);
+      return;
+    }
+
+    targetMeasurementLayer = result.layer;
+    measurementLayerName = result.layer.name;
+    compassVisible = true;
+    seedTypeForMode();
+  }
+
+  function closeCompass() {
+    compassVisible = false;
+  }
+
   function currentGeometry() {
     const info = currentPositionInfo();
 
@@ -194,7 +316,7 @@ Item {
     const tilt = measurementFrozen ? frozenTilt : liveTilt;
     const geometry = currentGeometry();
     const info = currentPositionInfo();
-    const targetLayer = layerByName(measurementLayerName);
+    const targetLayer = targetMeasurementLayer ? targetMeasurementLayer : layerByName(measurementLayerName);
 
     if (!targetLayer) {
       iface.mainWindow().displayToast("Missing layer: " + measurementLayerName);
@@ -320,13 +442,46 @@ Item {
     return measurementFrozen ? "Unlock measurement" : "Lock current measurement";
   }
 
+  QfToolButton {
+    id: compassLauncher
+    visible: true
+    iconSource: Theme.getThemeVectorIcon("ic_explore_white_24dp")
+    iconColor: Theme.toolButtonColor
+    bgcolor: Theme.toolButtonBackgroundColor
+    round: true
+    onClicked: root.openCompassFromMap()
+  }
+
+  Dialog {
+    id: noticeDialog
+    parent: iface.mainWindow().contentItem
+    modal: true
+    visible: false
+    title: "Geo Compass"
+
+    property string text: ""
+
+    standardButtons: Dialog.Ok
+
+    contentItem: Label {
+      text: noticeDialog.text
+      wrapMode: Text.WordWrap
+      width: 280
+      color: root.textPrimary
+    }
+  }
+
   Component.onCompleted: {
     seedTypeForMode();
-    iface.mainWindow().displayToast("Geo compass plugin loaded");
+    iface.addItemToPluginsToolbar(compassLauncher);
+    iface.mainWindow().displayToast("Geo compass plugin ready");
   }
 
   Rectangle {
+    parent: iface.mainWindow().contentItem
     anchors.fill: parent
+    visible: compassVisible
+    z: 1000
     color: appBg
 
     Column {
@@ -443,6 +598,29 @@ Item {
                 ctx.lineTo(width - 10, height / 2);
                 ctx.stroke();
               }
+            }
+          }
+
+          Rectangle {
+            width: 38
+            height: 38
+            radius: 19
+            anchors.verticalCenter: parent.verticalCenter
+            color: "#ececeb"
+            border.color: "#8e8e8e"
+            border.width: 1
+
+            Text {
+              anchors.centerIn: parent
+              text: "\u2715"
+              color: textPrimary
+              font.pixelSize: 18
+              font.bold: true
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              onClicked: root.closeCompass()
             }
           }
         }
