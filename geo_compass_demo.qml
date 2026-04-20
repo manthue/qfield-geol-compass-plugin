@@ -127,6 +127,32 @@ Item {
     return "none";
   }
 
+  function formatSensorValue(valid, value) {
+    if (!valid || isNaN(value)) {
+      return "--";
+    }
+
+    return Math.round(value) + "\u00b0";
+  }
+
+  function sensorDebugLabel() {
+    const info = currentPositionInfo();
+    const orientationValue = !isNaN(iface.positioning().orientation)
+      ? Math.round(normalizeAzimuth(iface.positioning().orientation)) + "\u00b0"
+      : "--";
+
+    return "imuHeading "
+      + formatSensorValue(info.imuHeadingValid, info.imuHeading)
+      + " | pitch "
+      + formatSensorValue(info.imuPitchValid, info.imuPitch)
+      + " | roll "
+      + formatSensorValue(info.imuRollValid, info.imuRoll)
+      + " | steering "
+      + formatSensorValue(info.imuSteeringValid, info.imuSteering)
+      + " | orientation "
+      + orientationValue;
+  }
+
   function freezeMeasurement() {
     const heading = liveHeading;
     const tilt = liveTilt;
@@ -1290,6 +1316,16 @@ Item {
             text: "Target layer: " + measurementLayerName
             color: textMuted
             font.pixelSize: 12
+          }
+
+          Text {
+            width: 330
+            anchors.horizontalCenter: parent.horizontalCenter
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            text: sensorDebugLabel()
+            color: textMuted
+            font.pixelSize: 11
           }
         }
       }
