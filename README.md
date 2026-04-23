@@ -1,6 +1,8 @@
 # Geo Compass QField Plugin
 
-This plugin is a QField app plugin for Android field mapping. It captures structural measurements from the built-in device orientation sensors and saves them as point features into existing vector layers in the current QGIS/QField project.
+This plugin is a QField app plugin for Android field mapping. It shows live device orientation readings in QField and can save those readings as planar or linear structural observations in an existing vector layer.
+
+Historical packaged Geo Compass builds are kept in the release assets.
 
 ## Important platform note
 
@@ -11,7 +13,9 @@ QField on Android does not run Python QGIS plugins. The current official extensi
 
 This repository therefore uses a `main.qml` plugin instead of a Python desktop plugin.
 
-## Measurement model
+## Sensor readout and capture model
+
+The live display is intentionally a field sensor tool. It now prefers direct Qt phone sensors, using the rotation sensor plus compass when available and falling back to gravity-mode accelerometer plus heading when needed.
 
 The plugin treats the phone orientation as follows:
 
@@ -22,7 +26,7 @@ The plugin treats the phone orientation as follows:
   - `dip_dir`: phone heading in degrees `0..360`
   - `dip_ang`: positive downward tilt in degrees `0..90`
 
-The tilt is derived from `imuPitch` when available, otherwise `imuRoll`. The plugin stores the absolute downward angle and clamps it to the range `0..90`.
+For planar measurements, the plugin derives dip and dip direction from the phone plane rather than simply treating the phone heading as down-dip. For linear measurements, it treats the phone top edge as the measured line direction. When the rotation sensor is unavailable, it falls back to gravity-mode accelerometer plus heading.
 
 This assumes the phone is aligned with the feature during measurement:
 
@@ -33,14 +37,14 @@ This assumes the phone is aligned with the feature during measurement:
 
 The plugin is designed for a simple in-field sequence:
 
-1. Wait for GNSS, compass, and tilt to become valid.
+1. Wait for GNSS, heading, and tilt to become valid.
 2. Choose `Planar` or `Linear`.
 3. Align the phone with the structure.
-4. Tap `Lock current measurement` to freeze the reading.
+4. Tap `Freeze current reading` to freeze the readout.
 5. Optionally enter a locality, structure `type`, geology, and comment.
-6. Tap `Save` to write a point feature at the current GNSS position.
+6. Tap `Save` to write a point feature at the frozen GNSS position and frozen orientation.
 
-If you do not lock a measurement first, the plugin will save the current live values.
+The save button only becomes active after a reading has been frozen successfully.
 
 ## Required layers
 
@@ -67,6 +71,7 @@ Recommended shapefile fields:
 - `tilt` `Real`
 - `sensor` `Text`
 - `created_utc` `Text`
+  or shapefile-safe `createdutc`
 - `Locality` `Text`
 - `Comment` `Text`
 - `notes` `Text`
@@ -108,12 +113,12 @@ To use it as a QField project plugin, copy `main.qml` next to that project and r
 
 - `geo_compass_demo.qml`
 
-The starter project is intentionally minimal. You still need to add an editable point layer named `geology_measurements` with the fields described below before the save workflow will work.
+The starter project now includes a ready-made `geology_measurements` GeoPackage layer and map symbols for planar and linear readings.
 
 ## Current capabilities
 
 - live GNSS coordinate display
-- live compass heading and tilt display
+- live heading and tilt display with phone-sensor source labels
 - explicit hold or unlock workflow before saving
 - planar and linear measurement modes
 - FieldMove-inspired measurement-first mobile layout
@@ -124,6 +129,7 @@ The starter project is intentionally minimal. You still need to add an editable 
 
 - This has not yet been device-tested in this workspace.
 - Sensor behavior depends on the Android device and how QField exposes IMU values on that device.
+- The live readout is still a device-sensor solution and should not be treated as survey-grade orientation without field validation.
 - The plugin currently saves measurements as point features at the current GNSS position.
 - The layer name is still fixed in `main.qml` as `geology_measurements`.
 
@@ -132,4 +138,4 @@ The starter project is intentionally minimal. You still need to add an editable 
 - support user-configurable layer names and field names
 - add sensor accuracy or calibration warnings
 - add optional strike or right-hand-rule outputs for planes
-- package an example QGIS project with ready-made layers and forms
+- make the target layer selection explicit and user-configurable

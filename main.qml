@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Shapes
+import QtSensors
 import org.qfield
 import Theme
 
@@ -14,6 +14,26 @@ Item {
   property bool compassVisible: false
   property real frozenHeading: NaN
   property real frozenTilt: NaN
+  property real frozenLatitude: NaN
+  property real frozenLongitude: NaN
+  property real lastSavedLatitude: NaN
+  property real lastSavedLongitude: NaN
+  property real compassHeadingDeg: NaN
+  property real compassCalibrationLevel: NaN
+  property real rotationXDeg: NaN
+  property real rotationYDeg: NaN
+  property real rotationZDeg: NaN
+  property real accelX: NaN
+  property real accelY: NaN
+  property real accelZ: NaN
+  property real qfieldOrientationDeg: NaN
+  property real magneticVariationDeg: NaN
+  property int rotationMappingIndex: -1
+
+  property bool hasCompassReading: false
+  property bool hasRotationReading: false
+  property bool hasAccelReading: false
+  readonly property string pluginVersionLabel: "v0.3.33"
 
   property string localityText: ""
   property string typeText: ""
@@ -48,6 +68,34 @@ Item {
   readonly property real liveTilt: currentTiltDown()
   readonly property real displayHeading: measurementFrozen ? frozenHeading : liveHeading
   readonly property real displayTilt: measurementFrozen ? frozenTilt : liveTilt
+  readonly property bool frozenPositionReady: !isNaN(frozenLatitude) && !isNaN(frozenLongitude)
+  readonly property bool livePositionReady: positionInfo
+                                          && !isNaN(positionInfo.latitude)
+                                          && !isNaN(positionInfo.longitude)
+                                          && (positionInfo.isValid
+                                              || positionInfo.latitudeValid
+                                              || positionInfo.longitudeValid)
+  readonly property bool saveReady: measurementFrozen
+                                  && !isNaN(frozenHeading)
+                                  && !isNaN(frozenTilt)
+                                  && frozenPositionReady
+
+  onActiveModeChanged: requestDialPaints()
+
+  function requestDialPaints() {
+    if (planarSymbolCanvas) {
+      planarSymbolCanvas.requestPaint();
+    }
+    if (linearSymbolCanvas) {
+      linearSymbolCanvas.requestPaint();
+    }
+    if (planarGuideCanvas) {
+      planarGuideCanvas.requestPaint();
+    }
+    if (headingMarkerCanvas) {
+      headingMarkerCanvas.requestPaint();
+    }
+  }
 
   function normalizeAzimuth(value) {
     if (isNaN(value)) {
@@ -59,6 +107,14 @@ Item {
       normalized += 360;
     }
     return normalized;
+  }
+
+  function degreesToRadians(value) {
+    return value * Math.PI / 180;
+  }
+
+  function radiansToDegrees(value) {
+    return value * 180 / Math.PI;
   }
 
   function clampPositiveAngle(value) {
@@ -77,54 +133,466 @@ Item {
     return iface.positioning().positionInformation;
   }
 
-  function currentHeading() {
+  function updatePositioningFallbacks() {
     const info = currentPositionInfo();
+    let nextOrientation = NaN;
+    let nextMagneticVariation = NaN;
 
-    if (info.imuHeadingValid) {
-      return normalizeAzimuth(info.imuHeading);
+    if (info) {
+      if (info.orientationValid && !isNaN(info.orientation)) {
+        nextOrientation = normalizeAzimuth(info.orientation);
+      } else {
+        try {
+          const orientation = iface.positioning().orientation;
+          if (!isNaN(orientation)) {
+            nextOrientation = normalizeAzimuth(orientation);
+          }
+        } catch (error) {
+          nextOrientation = NaN;
+        }
+      }
+
+      if (!isNaN(info.magneticVariation)) {
+        nextMagneticVariation = info.magneticVariation;
+      }
+    } else {
+      try {
+        const orientation = iface.positioning().orientation;
+        if (!isNaN(orientation)) {
+          nextOrientation = normalizeAzimuth(orientation);
+        }
+      } catch (error) {
+        nextOrientation = NaN;
+      }
     }
 
-    if (!isNaN(iface.positioning().orientation)) {
-      return normalizeAzimuth(iface.positioning().orientation);
+    qfieldOrientationDeg = isNaN(nextOrientation)
+      ? NaN
+      : smoothAngle(qfieldOrientationDeg, nextOrientation, 0.25);
+    magneticVariationDeg = nextMagneticVariation;
+  }
+
+  function vectorLength(x, y, z) {
+    return Math.sqrt(x * x + y * y + z * z);
+  }
+
+  function normalizeVector(vector) {
+    const length = vectorLength(vector.x, vector.y, vector.z);
+    if (length < 1e-6) {
+      return null;
+    }
+
+    return {
+      x: vector.x / length,
+      y: vector.y / length,
+      z: vector.z / length
+    };
+  }
+
+  function crossProduct(a, b) {
+    return {
+      x: a.y * b.z - a.z * b.y,
+      y: a.z * b.x - a.x * b.z,
+      z: a.x * b.y - a.y * b.x
+    };
+  }
+
+  function scaleVector(vector, factor) {
+    return {
+      x: vector.x * factor,
+      y: vector.y * factor,
+      z: vector.z * factor
+    };
+  }
+
+  function smoothScalar(previous, next, alpha) {
+    if (isNaN(next)) {
+      return previous;
+    }
+
+    if (isNaN(previous)) {
+      return next;
+    }
+
+    return previous + (next - previous) * alpha;
+  }
+
+  function smoothAngle(previous, next, alpha) {
+    if (isNaN(next)) {
+      return previous;
+    }
+
+    if (isNaN(previous)) {
+      return normalizeAzimuth(next);
+    }
+
+    const delta = ((next - previous + 540) % 360) - 180;
+    return normalizeAzimuth(previous + delta * alpha);
+  }
+
+  function shortestAngleDelta(a, b) {
+    return ((a - b + 540) % 360) - 180;
+  }
+
+  function tiltFromAccelerometer(x, y, z) {
+    return radiansToDegrees(Math.atan2(Math.sqrt(x * x + y * y), Math.abs(z)));
+  }
+
+  function azimuthFromEastNorth(east, north) {
+    return normalizeAzimuth(radiansToDegrees(Math.atan2(east, north)));
+  }
+
+  function defaultRotationMappingIndex() {
+    return 1;
+  }
+
+  function currentCompassHeading() {
+    if (isNaN(compassHeadingDeg)) {
+      return NaN;
+    }
+
+    if (!isNaN(magneticVariationDeg)) {
+      return normalizeAzimuth(compassHeadingDeg + magneticVariationDeg);
+    }
+
+    return compassHeadingDeg;
+  }
+
+  function currentFallbackHeading() {
+    const compassHeading = currentCompassHeading();
+    if (!isNaN(compassHeading)) {
+      return compassHeading;
+    }
+
+    if (!isNaN(qfieldOrientationDeg)) {
+      return qfieldOrientationDeg;
     }
 
     return NaN;
+  }
+
+  function reconstructPlaneNormal(headingDeg, ax, ay, az) {
+    if (isNaN(headingDeg) || isNaN(ax) || isNaN(ay) || isNaN(az)) {
+      return null;
+    }
+
+    const accelLength = vectorLength(ax, ay, az);
+    if (accelLength < 1e-6) {
+      return null;
+    }
+
+    const upX = ax / accelLength;
+    const upY = ay / accelLength;
+    const upZ = az / accelLength;
+
+    const topHorizontalLength = Math.sqrt(Math.max(0, 1 - upY * upY));
+    if (topHorizontalLength < 1e-6) {
+      return null;
+    }
+
+    const headingRad = degreesToRadians(headingDeg);
+    const topHorizontal = {
+      x: Math.sin(headingRad),
+      y: Math.cos(headingRad),
+      z: 0
+    };
+    const rightHorizontal = {
+      x: Math.cos(headingRad),
+      y: -Math.sin(headingRad),
+      z: 0
+    };
+
+    const deviceY = {
+      x: topHorizontal.x * topHorizontalLength,
+      y: topHorizontal.y * topHorizontalLength,
+      z: upY
+    };
+
+    const b = -(upX * upY) / topHorizontalLength;
+    const aAbs = Math.sqrt(Math.max(0, 1 - upX * upX - b * b));
+
+    const deviceX1 = {
+      x: rightHorizontal.x * aAbs + topHorizontal.x * b,
+      y: rightHorizontal.y * aAbs + topHorizontal.y * b,
+      z: upX
+    };
+    const deviceX2 = {
+      x: -rightHorizontal.x * aAbs + topHorizontal.x * b,
+      y: -rightHorizontal.y * aAbs + topHorizontal.y * b,
+      z: upX
+    };
+
+    const normal1 = normalizeVector(crossProduct(deviceX1, deviceY));
+    const normal2 = normalizeVector(crossProduct(deviceX2, deviceY));
+    if (!normal1 || !normal2) {
+      return null;
+    }
+
+    let chosen = Math.abs(normal1.z - upZ) <= Math.abs(normal2.z - upZ) ? normal1 : normal2;
+    if (chosen.z < 0) {
+      chosen = scaleVector(chosen, -1);
+    }
+
+    return chosen;
+  }
+
+  function planeOrientationFromNormal(normal) {
+    if (!normal) {
+      return null;
+    }
+
+    const horizontalLength = Math.sqrt(normal.x * normal.x + normal.y * normal.y);
+    const dipDeg = radiansToDegrees(Math.atan2(horizontalLength, Math.max(0, normal.z)));
+    const dipDirectionDeg = horizontalLength < 1e-6
+      ? NaN
+      : azimuthFromEastNorth(normal.x, normal.y);
+
+    return {
+      dipDeg: dipDeg,
+      dipDirectionDeg: dipDirectionDeg
+    };
+  }
+
+  function gravityPlanarOrientation() {
+    const headingDeg = currentFallbackHeading();
+    const normal = reconstructPlaneNormal(headingDeg, accelX, accelY, accelZ);
+    return planeOrientationFromNormal(normal);
+  }
+
+  function gravityLinearOrientation() {
+    const headingDeg = currentFallbackHeading();
+    if (isNaN(headingDeg) || isNaN(accelX) || isNaN(accelY) || isNaN(accelZ)) {
+      return null;
+    }
+
+    return {
+      trendDeg: headingDeg,
+      plungeDeg: tiltFromAccelerometer(accelX, accelY, accelZ)
+    };
+  }
+
+  function rotationCandidateOrientation(headingDeg, xDeg, yDeg, swapAxes, forwardSign, rightSign) {
+    const forwardRadians = degreesToRadians(swapAxes ? yDeg : xDeg);
+    const rightRadians = degreesToRadians(swapAxes ? xDeg : yDeg);
+    const forwardSlope = forwardSign * Math.tan(forwardRadians);
+    const rightSlope = rightSign * Math.tan(rightRadians);
+    const combinedSlope = Math.sqrt(forwardSlope * forwardSlope + rightSlope * rightSlope);
+
+    return {
+      dipDeg: radiansToDegrees(Math.atan(combinedSlope)),
+      dipDirectionDeg: combinedSlope < 1e-6
+        ? NaN
+        : normalizeAzimuth(headingDeg + radiansToDegrees(Math.atan2(rightSlope, forwardSlope))),
+      trendDeg: forwardSlope >= 0
+        ? normalizeAzimuth(headingDeg)
+        : normalizeAzimuth(headingDeg + 180),
+      plungeDeg: radiansToDegrees(Math.atan(Math.abs(forwardSlope)))
+    };
+  }
+
+  function rotationCandidateFromIndex(index, headingDeg, xDeg, yDeg) {
+    let candidateIndex = 0;
+    const signs = [-1, 1];
+
+    for (let swapIndex = 0; swapIndex < 2; ++swapIndex) {
+      const swapAxes = swapIndex === 1;
+
+      for (let forwardIndex = 0; forwardIndex < signs.length; ++forwardIndex) {
+        const forwardSign = signs[forwardIndex];
+
+        for (let rightIndex = 0; rightIndex < signs.length; ++rightIndex) {
+          const rightSign = signs[rightIndex];
+
+          if (candidateIndex === index) {
+            return rotationCandidateOrientation(
+              headingDeg,
+              xDeg,
+              yDeg,
+              swapAxes,
+              forwardSign,
+              rightSign
+            );
+          }
+
+          candidateIndex += 1;
+        }
+      }
+    }
+
+    return rotationCandidateOrientation(headingDeg, xDeg, yDeg, false, -1, 1);
+  }
+
+  function updateRotationMapping() {
+    const headingDeg = currentFallbackHeading();
+    if (isNaN(headingDeg) || isNaN(rotationXDeg) || isNaN(rotationYDeg)) {
+      return;
+    }
+
+    const gravityOrientation = gravityPlanarOrientation();
+    let bestIndex = rotationMappingIndex >= 0 ? rotationMappingIndex : defaultRotationMappingIndex();
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (let candidateIndex = 0; candidateIndex < 8; ++candidateIndex) {
+      const candidate = rotationCandidateFromIndex(candidateIndex, headingDeg, rotationXDeg, rotationYDeg);
+      let score = 0;
+
+      if (gravityOrientation) {
+        score += Math.abs(candidate.dipDeg - gravityOrientation.dipDeg);
+
+        if (!isNaN(candidate.dipDirectionDeg)
+            && !isNaN(gravityOrientation.dipDirectionDeg)
+            && candidate.dipDeg > 3
+            && gravityOrientation.dipDeg > 3) {
+          score += Math.abs(shortestAngleDelta(candidate.dipDirectionDeg, gravityOrientation.dipDirectionDeg)) * 0.25;
+        }
+      } else if (rotationMappingIndex >= 0) {
+        score += candidateIndex === rotationMappingIndex ? 0 : 10;
+      } else {
+        score += candidateIndex === defaultRotationMappingIndex() ? 0 : 10;
+      }
+
+      if (candidateIndex === rotationMappingIndex) {
+        score -= 0.5;
+      }
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = candidateIndex;
+      }
+    }
+
+    rotationMappingIndex = bestIndex;
+  }
+
+  function rotationOrientation() {
+    const headingDeg = currentFallbackHeading();
+    if (isNaN(headingDeg) || isNaN(rotationXDeg) || isNaN(rotationYDeg)) {
+      return null;
+    }
+
+    const mappingIndex = rotationMappingIndex >= 0 ? rotationMappingIndex : defaultRotationMappingIndex();
+    return rotationCandidateFromIndex(mappingIndex, headingDeg, rotationXDeg, rotationYDeg);
+  }
+
+  function currentPlanarOrientation() {
+    const rotation = rotationOrientation();
+    if (rotation) {
+      return {
+        heading: rotation.dipDirectionDeg,
+        tilt: rotation.dipDeg,
+        method: "rotation + compass"
+      };
+    }
+
+    const gravity = gravityPlanarOrientation();
+    if (gravity) {
+      return {
+        heading: gravity.dipDirectionDeg,
+        tilt: gravity.dipDeg,
+        method: "gravity + compass"
+      };
+    }
+
+    return null;
+  }
+
+  function currentLinearOrientation() {
+    const rotation = rotationOrientation();
+    if (rotation) {
+      return {
+        heading: rotation.trendDeg,
+        tilt: rotation.plungeDeg,
+        method: "rotation + compass"
+      };
+    }
+
+    const gravity = gravityLinearOrientation();
+    if (gravity) {
+      return {
+        heading: gravity.trendDeg,
+        tilt: gravity.plungeDeg,
+        method: "gravity + compass"
+      };
+    }
+
+    return null;
+  }
+
+  function currentMeasurementOrientation() {
+    return activeMode === "planar"
+      ? currentPlanarOrientation()
+      : currentLinearOrientation();
+  }
+
+  function currentHeading() {
+    const orientation = currentMeasurementOrientation();
+    return orientation ? orientation.heading : NaN;
   }
 
   function currentTiltDown() {
-    const info = currentPositionInfo();
-
-    if (info.imuPitchValid) {
-      return clampPositiveAngle(info.imuPitch);
-    }
-
-    if (info.imuRollValid) {
-      return clampPositiveAngle(info.imuRoll);
-    }
-
-    if (info.imuSteeringValid) {
-      return clampPositiveAngle(info.imuSteering);
-    }
-
-    return NaN;
+    const orientation = currentMeasurementOrientation();
+    return orientation ? orientation.tilt : NaN;
   }
 
-  function tiltSensorLabel() {
-    const info = currentPositionInfo();
-
-    if (info.imuPitchValid) {
-      return "pitch";
+  function headingSensorLabel() {
+    if (!isNaN(currentCompassHeading())) {
+      return isNaN(magneticVariationDeg) ? "compass" : "compass + declination";
     }
 
-    if (info.imuRollValid) {
-      return "roll";
-    }
-
-    if (info.imuSteeringValid) {
-      return "steering";
+    if (!isNaN(qfieldOrientationDeg)) {
+      return "qfield orientation";
     }
 
     return "none";
+  }
+
+  function tiltSensorLabel() {
+    if (hasRotationReading) {
+      return "rotation sensor";
+    }
+
+    if (hasAccelReading) {
+      return "accelerometer gravity";
+    }
+
+    return "none";
+  }
+
+  function measurementMethodLabel() {
+    const orientation = currentMeasurementOrientation();
+    return orientation ? orientation.method : "none";
+  }
+
+  function tiltDisplayLabel() {
+    return activeMode === "planar" ? "Dip" : "Plunge";
+  }
+
+  function headingDisplayLabel() {
+    return activeMode === "planar" ? "Dip Dir" : "Trend";
+  }
+
+  function modeSubtitleLabel() {
+    return activeMode === "planar" ? "Planar capture mode" : "Linear capture mode";
+  }
+
+  function readoutBannerLabel() {
+    return measurementFrozen
+      ? "Locked " + modeDisplayName.toLowerCase() + " reading"
+      : modeDisplayName + " reading";
+  }
+
+  function sensorSourceSummaryLabel() {
+    return "Method: " + measurementMethodLabel()
+      + " | Heading: " + headingSensorLabel()
+      + " | Tilt: " + tiltSensorLabel();
+  }
+
+  function sensorGuidanceLabel() {
+    const modeGuidance = activeMode === "planar"
+      ? "Lay the back of the phone flush on the plane."
+      : "Align the phone top edge with the lineation.";
+
+    return "Phone-first sensors: rotation + compass when available, accelerometer gravity fallback. " + modeGuidance;
   }
 
   function formatSensorValue(valid, value) {
@@ -135,61 +603,97 @@ Item {
     return Math.round(value) + "\u00b0";
   }
 
-  function sensorDebugLabel() {
-    const info = currentPositionInfo();
-    const orientationValue = !isNaN(iface.positioning().orientation)
-      ? Math.round(normalizeAzimuth(iface.positioning().orientation)) + "\u00b0"
-      : "--";
+  function formatAngleValue(value) {
+    if (isNaN(value)) {
+      return "--";
+    }
 
-    return "imuHeading "
-      + formatSensorValue(info.imuHeadingValid, info.imuHeading)
-      + " | pitch "
-      + formatSensorValue(info.imuPitchValid, info.imuPitch)
-      + " | roll "
-      + formatSensorValue(info.imuRollValid, info.imuRoll)
-      + " | steering "
-      + formatSensorValue(info.imuSteeringValid, info.imuSteering)
-      + " | orientation "
-      + orientationValue;
+    return Math.round(value) + "\u00b0";
+  }
+
+  function formatAxisValue(value) {
+    if (isNaN(value)) {
+      return "--";
+    }
+
+    return value.toFixed(2);
+  }
+
+  function sensorDebugLabel() {
+    return "Compass "
+      + formatAngleValue(currentCompassHeading())
+      + " | RotX "
+      + formatAngleValue(rotationXDeg)
+      + " | RotY "
+      + formatAngleValue(rotationYDeg)
+      + " | RotZ "
+      + formatAngleValue(rotationZDeg)
+      + " | QField "
+      + formatAngleValue(qfieldOrientationDeg);
   }
 
   function sensorDebugMultilineLabel() {
-    const info = currentPositionInfo();
-    const orientationValue = !isNaN(iface.positioning().orientation)
-      ? Math.round(normalizeAzimuth(iface.positioning().orientation)) + "\u00b0"
-      : "--";
-
-    return "Heading: " + formatSensorValue(info.imuHeadingValid, info.imuHeading)
-      + "    Orientation: " + orientationValue
-      + "\nPitch: " + formatSensorValue(info.imuPitchValid, info.imuPitch)
-      + "    Roll: " + formatSensorValue(info.imuRollValid, info.imuRoll)
-      + "    Steering: " + formatSensorValue(info.imuSteeringValid, info.imuSteering);
+    return "Compass: " + formatAngleValue(currentCompassHeading())
+      + "    Method: " + measurementMethodLabel()
+      + "\nRot X/Y/Z: " + formatAngleValue(rotationXDeg)
+      + " / " + formatAngleValue(rotationYDeg)
+      + " / " + formatAngleValue(rotationZDeg)
+      + "\nAccel X/Y/Z: " + formatAxisValue(accelX)
+      + " / " + formatAxisValue(accelY)
+      + " / " + formatAxisValue(accelZ);
   }
 
   function freezeMeasurement() {
     const heading = liveHeading;
     const tilt = liveTilt;
+    const info = currentPositionInfo();
+    const hasUsablePosition = info
+      && !isNaN(info.latitude)
+      && !isNaN(info.longitude)
+      && (info.isValid || info.latitudeValid || info.longitudeValid);
 
     if (isNaN(heading)) {
-      iface.mainWindow().displayToast("No valid compass heading available");
+      iface.mainWindow().displayToast("No valid heading available from the phone sensors");
       return;
     }
 
     if (isNaN(tilt)) {
-      iface.mainWindow().displayToast("No valid tilt value available from pitch, roll, or steering sensors");
+      iface.mainWindow().displayToast("No valid tilt value available from the phone sensors");
+      return;
+    }
+
+    if (!hasUsablePosition) {
+      iface.mainWindow().displayToast("No valid GNSS position available to freeze");
       return;
     }
 
     frozenHeading = heading;
     frozenTilt = tilt;
+    frozenLatitude = info.latitude;
+    frozenLongitude = info.longitude;
     measurementFrozen = true;
-    iface.mainWindow().displayToast("Measurement locked");
+    iface.mainWindow().displayToast("Sensor readout and position frozen");
   }
 
   function clearFrozenMeasurement() {
     measurementFrozen = false;
     frozenHeading = NaN;
     frozenTilt = NaN;
+    frozenLatitude = NaN;
+    frozenLongitude = NaN;
+  }
+
+  function currentSensorTag() {
+    const method = measurementMethodLabel();
+    if (method === "rotation + compass") {
+      return "qt_rotation_compass";
+    }
+
+    if (method === "gravity + compass") {
+      return "qt_accel_compass";
+    }
+
+    return "qt_internal";
   }
 
   function layerByName(name) {
@@ -200,21 +704,192 @@ Item {
     return matches[0];
   }
 
+  function memberValue(target, memberName) {
+    if (!target || !memberName) {
+      return undefined;
+    }
+
+    const member = target[memberName];
+    if (member === undefined || member === null) {
+      return member;
+    }
+
+    if (typeof member === "function") {
+      try {
+        return target[memberName]();
+      } catch (error) {
+      }
+    }
+
+    return member;
+  }
+
+  function collectionLength(collection) {
+    if (!collection) {
+      return 0;
+    }
+
+    const lengthValue = memberValue(collection, "length");
+    const numericLength = Number(lengthValue);
+    if (!isNaN(numericLength)) {
+      return numericLength;
+    }
+
+    const countValue = memberValue(collection, "count");
+    const numericCount = Number(countValue);
+    if (!isNaN(numericCount)) {
+      return numericCount;
+    }
+
+    return 0;
+  }
+
+  function collectionItem(collection, index) {
+    if (!collection || index < 0) {
+      return null;
+    }
+
+    if (collection[index] !== undefined) {
+      return collection[index];
+    }
+
+    if (typeof collection.at === "function") {
+      try {
+        return collection.at(index);
+      } catch (error) {
+      }
+    }
+
+    if (typeof collection.field === "function") {
+      try {
+        return collection.field(index);
+      } catch (error) {
+      }
+    }
+
+    if (typeof collection.get === "function") {
+      try {
+        return collection.get(index);
+      } catch (error) {
+      }
+    }
+
+    return null;
+  }
+
+  function layerNameValue(layer) {
+    const nameValue = memberValue(layer, "name");
+    if (nameValue === undefined || nameValue === null) {
+      return "";
+    }
+
+    return String(nameValue);
+  }
+
+  function layerDisplayName(layer) {
+    const nameValue = layerNameValue(layer);
+    return nameValue.length > 0 ? nameValue : "unnamed layer";
+  }
+
+  function layerFieldsValue(layer) {
+    const fieldsValue = memberValue(layer, "fields");
+    return fieldsValue ? fieldsValue : [];
+  }
+
+  function fieldNameValue(field) {
+    const nameValue = memberValue(field, "name");
+    if (nameValue === undefined || nameValue === null) {
+      return "";
+    }
+
+    return String(nameValue);
+  }
+
   function layerGeometryTypeValue(layer) {
     if (!layer) {
-      return -1;
+      return NaN;
     }
 
-    if (layer.geometryType === undefined || layer.geometryType === null) {
-      return -1;
+    const geometryTypeValue = memberValue(layer, "geometryType");
+    const numericGeometryType = Number(geometryTypeValue);
+    if (!isNaN(numericGeometryType)) {
+      return numericGeometryType;
     }
 
-    return Number(layer.geometryType);
+    if (geometryTypeValue !== undefined && geometryTypeValue !== null) {
+      const geometryTypeText = String(geometryTypeValue).toLowerCase();
+      if (geometryTypeText.indexOf("point") !== -1) {
+        return 0;
+      }
+      if (geometryTypeText.indexOf("line") !== -1) {
+        return 1;
+      }
+      if (geometryTypeText.indexOf("polygon") !== -1) {
+        return 2;
+      }
+    }
+
+    const wkbTypeValue = memberValue(layer, "wkbType");
+    if (wkbTypeValue !== undefined && wkbTypeValue !== null) {
+      const wkbTypeText = String(wkbTypeValue).toLowerCase();
+      if (wkbTypeText.indexOf("point") !== -1) {
+        return 0;
+      }
+      if (wkbTypeText.indexOf("line") !== -1) {
+        return 1;
+      }
+      if (wkbTypeText.indexOf("polygon") !== -1) {
+        return 2;
+      }
+    }
+
+    return NaN;
   }
 
   function isPointLayer(layer) {
     const geometryType = layerGeometryTypeValue(layer);
-    return geometryType === -1 || geometryType === 0;
+    return geometryType === 0;
+  }
+
+  function resolvedFieldName(layer, fieldName) {
+    if (!fieldName || !layer) {
+      return "";
+    }
+
+    const fields = layerFieldsValue(layer);
+    const fieldCount = collectionLength(fields);
+    if (fieldCount === 0) {
+      return "";
+    }
+
+    const requestedName = String(fieldName);
+    const requestedLower = requestedName.toLowerCase();
+    const requestedCompact = requestedLower.replace(/[^a-z0-9]/g, "");
+    let caseInsensitiveMatch = "";
+    let compactMatch = "";
+
+    for (let i = 0; i < fieldCount; ++i) {
+      const currentName = fieldNameValue(collectionItem(fields, i));
+      if (currentName.length === 0) {
+        continue;
+      }
+
+      if (currentName === requestedName) {
+        return currentName;
+      }
+
+      if (caseInsensitiveMatch.length === 0 && currentName.toLowerCase() === requestedLower) {
+        caseInsensitiveMatch = currentName;
+      }
+
+      if (compactMatch.length === 0
+          && requestedCompact.length > 0
+          && currentName.toLowerCase().replace(/[^a-z0-9]/g, "") === requestedCompact) {
+        compactMatch = currentName;
+      }
+    }
+
+    return caseInsensitiveMatch.length > 0 ? caseInsensitiveMatch : compactMatch;
   }
 
   function missingRequiredFields(layer) {
@@ -233,19 +908,19 @@ Item {
 
   function compatibleLayerMessage(layer, missing) {
     if (!layer) {
-      return "No compatible point layer was found. Add an editable point layer with fields mode, trend, plunge, dip_dir, and dip_ang.";
+      return "No compatible point layer was found in this project.";
     }
 
     if (!isPointLayer(layer)) {
-      return "Layer '" + layer.name + "' is not a point layer.";
+      return "Layer '" + layerDisplayName(layer) + "' is not a point layer.";
     }
 
     if (LayerUtils.isFeatureAdditionLocked(layer)) {
-      return "Layer '" + layer.name + "' is not editable for adding features.";
+      return "Layer '" + layerDisplayName(layer) + "' is not editable for adding features.";
     }
 
     if (missing.length > 0) {
-      return "Layer '" + layer.name + "' is missing required fields: " + missing.join(", ");
+      return "Layer '" + layerDisplayName(layer) + "' is missing required fields: " + missing.join(", ");
     }
 
     return "";
@@ -297,63 +972,209 @@ Item {
     };
   }
 
-  function memoryLayerUri() {
-    let crsAuthId = "EPSG:4326";
+  function projectFilePath() {
+    let path = "";
+
     try {
-      if (qgisProject && qgisProject.crs && qgisProject.crs.authid) {
-        crsAuthId = qgisProject.crs.authid;
+      const mainWindow = iface.mainWindow();
+      const projectInfo = memberValue(mainWindow, "projectInfo");
+      const projectInfoPath = memberValue(projectInfo, "filePath");
+      if (projectInfoPath !== undefined && projectInfoPath !== null) {
+        path = String(projectInfoPath);
       }
     } catch (error) {
-      crsAuthId = "EPSG:4326";
+      path = "";
     }
 
-    return "Point"
-      + "?crs=" + encodeURIComponent(crsAuthId)
-      + "&field=mode:string(16)"
-      + "&field=trend:double"
-      + "&field=plunge:double"
-      + "&field=dip_dir:double"
-      + "&field=dip_ang:double"
-      + "&field=kind:string(16)"
-      + "&field=structure:string(64)"
-      + "&field=type:string(64)"
-      + "&field=Geology:string(80)"
-      + "&field=azimuth:double"
-      + "&field=tilt:double"
-      + "&field=sensor:string(32)"
-      + "&field=created_utc:string(40)"
-      + "&field=Locality:string(120)"
-      + "&field=Comment:string(255)"
-      + "&field=notes:string(255)"
-      + "&field=lat_wgs84:double"
-      + "&field=lon_wgs84:double"
-      + "&index=yes";
+    if (path.length > 0) {
+      return path;
+    }
+
+    try {
+      const fileName = memberValue(qgisProject, "fileName");
+      if (fileName !== undefined && fileName !== null) {
+        path = String(fileName);
+      }
+    } catch (error) {
+      path = "";
+    }
+
+    return path;
   }
 
-  function createMeasurementLayer() {
-    const createdLayer = LayerUtils.loadVectorLayer(
-      memoryLayerUri(),
-      measurementLayerName,
-      "memory"
-    );
+  function resolvedLocalPath(relativePath) {
+    let resolvedUrl = String(Qt.resolvedUrl(relativePath));
+    let localPath = decodeURIComponent(resolvedUrl);
 
-    if (!createdLayer) {
+    if (localPath.indexOf("file://") === 0) {
+      localPath = decodeURIComponent(localPath.substring(7));
+      if (localPath.length > 2 && localPath[0] === "/" && localPath[2] === ":") {
+        localPath = localPath.substring(1);
+      }
+    }
+
+    return localPath;
+  }
+
+  function projectDirectoryPath() {
+    const projectPath = projectFilePath();
+    if (projectPath.length === 0) {
+      return "";
+    }
+
+    return FileUtils.absolutePath(projectPath);
+  }
+
+  function projectCrsAuthId() {
+    let authId = "EPSG:4326";
+
+    try {
+      const crs = memberValue(qgisProject, "crs");
+      const value = memberValue(crs, "authid");
+      if (value !== undefined && value !== null && String(value).length > 0) {
+        authId = String(value);
+      }
+    } catch (error) {
+      authId = "EPSG:4326";
+    }
+
+    return authId;
+  }
+
+  function persistentLayerBaseName(layerName) {
+    const rawName = layerName && layerName.length > 0 ? layerName : measurementLayerName;
+    const sanitizedName = FileUtils.sanitizeFilePathPart(rawName);
+    return sanitizedName.length > 0 ? sanitizedName : "geology_measurements";
+  }
+
+  function persistentLayerFilePath(layerName) {
+    const projectDir = projectDirectoryPath();
+    if (projectDir.length === 0) {
+      return "";
+    }
+
+    return projectDir + "/" + persistentLayerBaseName(layerName) + ".gpkg";
+  }
+
+  function packagedTemplateLayerPath() {
+    return resolvedLocalPath("measurement_layer_template.gpkg");
+  }
+
+  function loadPersistentMeasurementLayer(layerName, filePath) {
+    let loadedLayer = LayerUtils.loadVectorLayer(filePath + "|layername=" + layerName, layerName, "ogr");
+    if (!loadedLayer) {
+      loadedLayer = LayerUtils.loadVectorLayer(filePath, layerName, "ogr");
+    }
+
+    if (!loadedLayer) {
       return {
         layer: null,
-        message: "QField could not create a temporary measurement layer."
+        message: "QField could not load measurement layer file '" + FileUtils.fileName(filePath) + "'."
       };
     }
 
-    if (!ProjectUtils.addMapLayer(qgisProject, createdLayer)) {
+    const compatibilityMessage = compatibleLayerMessage(loadedLayer, missingRequiredFields(loadedLayer));
+    if (compatibilityMessage.length > 0) {
       return {
         layer: null,
-        message: "QField created a layer but could not add it to the current project."
+        message: compatibilityMessage
       };
+    }
+
+    if (!ProjectUtils.addMapLayer(qgisProject, loadedLayer)) {
+      return {
+        layer: null,
+        message: "QField loaded a measurement layer file but could not add it to the current project."
+      };
+    }
+
+    try {
+      LayerUtils.setDefaultRenderer(loadedLayer, qgisProject);
+    } catch (error) {
     }
 
     return {
-      layer: createdLayer,
+      layer: loadedLayer,
       message: ""
+    };
+  }
+
+  function createPersistentMeasurementLayer() {
+    const projectDir = projectDirectoryPath();
+    if (projectDir.length === 0) {
+      return {
+        layer: null,
+        message: "QField could not determine the current project directory for creating a measurement layer."
+      };
+    }
+
+    let candidateName = measurementLayerName;
+    let candidatePath = persistentLayerFilePath(candidateName);
+
+    if (candidatePath.length === 0 || !FileUtils.isWithinProjectDirectory(candidatePath)) {
+      return {
+        layer: null,
+        message: "QField could not build a safe file path for a measurement layer inside the project directory."
+      };
+    }
+
+    if (!layerByName(candidateName) && FileUtils.fileExists(candidatePath)) {
+      const loadedExistingLayer = loadPersistentMeasurementLayer(candidateName, candidatePath);
+      if (loadedExistingLayer.layer) {
+        return {
+          layer: loadedExistingLayer.layer,
+          message: "",
+          created: false
+        };
+      }
+    }
+
+    let suffix = 2;
+    while (layerByName(candidateName) || FileUtils.fileExists(candidatePath)) {
+      candidateName = measurementLayerName + "_" + suffix;
+      candidatePath = persistentLayerFilePath(candidateName);
+      suffix += 1;
+    }
+
+    if (candidatePath.length === 0 || !FileUtils.isWithinProjectDirectory(candidatePath)) {
+      return {
+        layer: null,
+        message: "QField could not build a safe file path for a new measurement layer inside the project directory."
+      };
+    }
+
+    const templatePath = packagedTemplateLayerPath();
+    if (!templatePath || templatePath.length === 0 || !FileUtils.fileExists(templatePath)) {
+      return {
+        layer: null,
+        message: "QField could not find the bundled measurement layer template."
+      };
+    }
+
+    const templateContent = FileUtils.readFileContent(templatePath);
+    if (!templateContent || templateContent.length === 0) {
+      return {
+        layer: null,
+        message: "QField could not read the bundled measurement layer template."
+      };
+    }
+
+    if (!FileUtils.writeFileContent(candidatePath, templateContent)) {
+      return {
+        layer: null,
+        message: "QField could not copy the measurement layer template into the project directory."
+      };
+    }
+
+    const loadedLayer = loadPersistentMeasurementLayer(candidateName, candidatePath);
+    if (!loadedLayer.layer) {
+      return loadedLayer;
+    }
+
+    return {
+      layer: loadedLayer.layer,
+      message: "",
+      created: true
     };
   }
 
@@ -362,53 +1183,53 @@ Item {
     noticeDialog.open();
   }
 
-  function showCreateLayerPrompt(message) {
-    createLayerDialog.text = message;
-    createLayerDialog.open();
-  }
-
   function openCompassFromMap() {
     const result = findCompatibleMeasurementLayer();
 
     if (!result.layer) {
-      showCreateLayerPrompt(result.message);
+      const creation = createPersistentMeasurementLayer();
+      if (!creation.layer) {
+        showAlert(result.message + "\n\n" + creation.message);
+        return;
+      }
+
+      targetMeasurementLayer = creation.layer;
+      const createdLayerName = layerNameValue(creation.layer);
+      if (createdLayerName.length > 0) {
+        measurementLayerName = createdLayerName;
+      }
+      compassVisible = true;
+      seedTypeForMode();
+      requestDialPaints();
+      iface.mainWindow().displayToast(
+        creation.created
+          ? "Persistent measurement layer created and added to project"
+          : "Measurement layer loaded from project folder"
+      );
       return;
     }
 
     targetMeasurementLayer = result.layer;
-    measurementLayerName = result.layer.name;
+    const resultLayerName = layerNameValue(result.layer);
+    if (resultLayerName.length > 0) {
+      measurementLayerName = resultLayerName;
+    }
     compassVisible = true;
     seedTypeForMode();
+    requestDialPaints();
   }
 
   function closeCompass() {
     compassVisible = false;
+    refreshMapForSavedMeasurement();
   }
 
-  function createLayerAndOpenCompass() {
-    createLayerDialog.close();
-
-    const creation = createMeasurementLayer();
-    if (!creation.layer) {
-      showAlert(creation.message);
-      return;
-    }
-
-    targetMeasurementLayer = creation.layer;
-    measurementLayerName = creation.layer.name;
-    compassVisible = true;
-    seedTypeForMode();
-    iface.mainWindow().displayToast("Temporary measurement layer created");
-  }
-
-  function currentGeometry() {
-    const info = currentPositionInfo();
-
-    if (!info.isValid || !info.latitudeValid || !info.longitudeValid) {
+  function geometryFromCoordinates(longitude, latitude) {
+    if (isNaN(longitude) || isNaN(latitude)) {
       return null;
     }
 
-    const pointWgs84 = GeometryUtils.point(info.longitude, info.latitude);
+    const pointWgs84 = GeometryUtils.point(longitude, latitude);
     const pointProject = GeometryUtils.reprojectPoint(
       pointWgs84,
       CoordinateReferenceSystemUtils.wgs84Crs(),
@@ -418,25 +1239,86 @@ Item {
     return GeometryUtils.createGeometryFromPoint(pointProject);
   }
 
-  function fieldExists(layer, fieldName) {
-    if (!fieldName || !layer || !layer.fields || !layer.fields.length) {
-      return false;
+  function currentGeometry() {
+    const info = currentPositionInfo();
+
+    if (!info.isValid || !info.latitudeValid || !info.longitudeValid) {
+      return null;
     }
 
-    for (let i = 0; i < layer.fields.length; ++i) {
-      const field = layer.fields[i];
-      if (field && field.name === fieldName) {
-        return true;
+    return geometryFromCoordinates(info.longitude, info.latitude);
+  }
+
+  function requestMapRefresh() {
+    const layer = targetMeasurementLayer ? targetMeasurementLayer : layerByName(measurementLayerName);
+
+    try {
+      if (layer) {
+        layer.triggerRepaint();
       }
+    } catch (error) {
     }
 
-    return false;
+    try {
+      const mapCanvas = iface.mapCanvas();
+      if (mapCanvas) {
+        mapCanvas.refresh(true);
+      }
+    } catch (error) {
+    }
+  }
+
+  function refreshMapForSavedMeasurement() {
+    const latitude = lastSavedLatitude;
+    const longitude = lastSavedLongitude;
+
+    requestMapRefresh();
+
+    if (isNaN(latitude) || isNaN(longitude)) {
+      return;
+    }
+
+    try {
+      const pointWgs84 = GeometryUtils.point(longitude, latitude);
+      const pointProject = GeometryUtils.reprojectPoint(
+        pointWgs84,
+        CoordinateReferenceSystemUtils.wgs84Crs(),
+        qgisProject.crs
+      );
+      const mapCanvas = iface.mapCanvas();
+      if (mapCanvas && pointProject) {
+        mapCanvas.jumpTo(pointProject, -1, -1, true);
+        mapCanvas.refresh(true);
+      }
+    } catch (error) {
+    }
+
+    lastSavedLatitude = NaN;
+    lastSavedLongitude = NaN;
+  }
+
+  function fieldExists(layer, fieldName) {
+    return resolvedFieldName(layer, fieldName).length > 0;
   }
 
   function setAttributeIfPresent(feature, layer, fieldName, value) {
-    if (fieldExists(layer, fieldName)) {
-      feature.setAttribute(fieldName, value);
+    const actualFieldName = resolvedFieldName(layer, fieldName);
+    if (actualFieldName.length > 0) {
+      feature.setAttribute(actualFieldName, value);
     }
+  }
+
+  function targetLayerLabel(layer) {
+    if (!layer) {
+      return measurementLayerName;
+    }
+
+    const layerName = layerNameValue(layer);
+    if (layerName.length > 0) {
+      return layerName;
+    }
+
+    return measurementLayerName;
   }
 
   function activeStructureType() {
@@ -454,29 +1336,55 @@ Item {
   }
 
   function saveMeasurement(kind) {
+    if (!saveReady) {
+      iface.mainWindow().displayToast(
+        measurementFrozen
+          ? "This locked reading has no frozen GNSS position yet"
+          : "Freeze a reading before saving it"
+      );
+      return;
+    }
+
     const heading = measurementFrozen ? frozenHeading : liveHeading;
     const tilt = measurementFrozen ? frozenTilt : liveTilt;
-    const geometry = currentGeometry();
     const info = currentPositionInfo();
+    const latitude = measurementFrozen
+      ? frozenLatitude
+      : (info.latitudeValid ? info.latitude : NaN);
+    const longitude = measurementFrozen
+      ? frozenLongitude
+      : (info.longitudeValid ? info.longitude : NaN);
+    const geometry = geometryFromCoordinates(longitude, latitude);
     const targetLayer = targetMeasurementLayer ? targetMeasurementLayer : layerByName(measurementLayerName);
+    const layerLabel = targetLayerLabel(targetLayer);
 
     if (!targetLayer) {
       iface.mainWindow().displayToast("Missing layer: " + measurementLayerName);
       return;
     }
 
+    const compatibilityMessage = compatibleLayerMessage(targetLayer, missingRequiredFields(targetLayer));
+    if (compatibilityMessage.length > 0) {
+      iface.mainWindow().displayToast(compatibilityMessage);
+      return;
+    }
+
     if (!geometry) {
-      iface.mainWindow().displayToast("No valid GNSS position available");
+      iface.mainWindow().displayToast(
+        measurementFrozen
+          ? "No frozen GNSS position is available for this reading"
+          : "No valid GNSS position available"
+      );
       return;
     }
 
     if (isNaN(heading)) {
-      iface.mainWindow().displayToast("No valid compass heading available");
+      iface.mainWindow().displayToast("No valid heading available from the phone sensors");
       return;
     }
 
     if (isNaN(tilt)) {
-      iface.mainWindow().displayToast("No valid tilt value available from pitch, roll, or steering sensors");
+      iface.mainWindow().displayToast("No valid tilt value available from the phone sensors");
       return;
     }
 
@@ -497,35 +1405,42 @@ Item {
     }
 
     setAttributeIfPresent(feature, targetLayer, "kind", kind);
-    setAttributeIfPresent(feature, targetLayer, "structure", activeStructureType());
-    setAttributeIfPresent(feature, targetLayer, "type", activeStructureType());
-    setAttributeIfPresent(feature, targetLayer, "Geology", geologyText.trim());
-    setAttributeIfPresent(feature, targetLayer, "geology", geologyText.trim());
     setAttributeIfPresent(feature, targetLayer, "azimuth", heading);
     setAttributeIfPresent(feature, targetLayer, "tilt", tilt);
-    setAttributeIfPresent(feature, targetLayer, "sensor", "android_internal");
+    setAttributeIfPresent(feature, targetLayer, "sensor", currentSensorTag());
     setAttributeIfPresent(feature, targetLayer, "created_utc", new Date().toISOString());
-    setAttributeIfPresent(feature, targetLayer, "locality", localityText.trim());
-    setAttributeIfPresent(feature, targetLayer, "Locality", localityText.trim());
-    setAttributeIfPresent(feature, targetLayer, "comment", noteText.trim());
-    setAttributeIfPresent(feature, targetLayer, "Comment", noteText.trim());
-    setAttributeIfPresent(feature, targetLayer, "notes", noteText.trim());
 
-    if (info.latitudeValid) {
-      setAttributeIfPresent(feature, targetLayer, "lat_wgs84", info.latitude);
+    if (!isNaN(latitude)) {
+      setAttributeIfPresent(feature, targetLayer, "lat_wgs84", latitude);
     }
 
-    if (info.longitudeValid) {
-      setAttributeIfPresent(feature, targetLayer, "lon_wgs84", info.longitude);
+    if (!isNaN(longitude)) {
+      setAttributeIfPresent(feature, targetLayer, "lon_wgs84", longitude);
     }
 
-    if (!LayerUtils.addFeature(targetLayer, feature)) {
-      iface.mainWindow().displayToast("Failed to save " + kind + " measurement");
+    iface.mainWindow().displayToast("Saving " + kind + " reading to layer " + layerLabel);
+    measurementFeatureModel.reset();
+    measurementFeatureModel.currentLayer = targetLayer;
+    measurementFeatureModel.feature = feature;
+    measurementFeatureModel.updateAttributesFromFeature(feature);
+
+    if (!measurementFeatureModel.changeGeometry(geometry)) {
+      measurementFeatureModel.reset();
+      iface.mainWindow().displayToast("Failed to prepare geometry for layer " + layerLabel);
       return;
     }
 
+    if (!measurementFeatureModel.create(true)) {
+      measurementFeatureModel.reset();
+      iface.mainWindow().displayToast("Failed to create " + kind + " measurement in layer " + layerLabel);
+      return;
+    }
+
+    lastSavedLatitude = latitude;
+    lastSavedLongitude = longitude;
+    requestMapRefresh();
     clearFrozenMeasurement();
-    iface.mainWindow().displayToast(kind + " measurement saved");
+    iface.mainWindow().displayToast(kind + " reading saved to layer " + layerLabel);
   }
 
   function formattedWholeAngle(value) {
@@ -554,34 +1469,141 @@ Item {
     return "" + Math.round(value);
   }
 
-  function coordinateLabel() {
-    const info = positionInfo;
+  function formatLatitude(value) {
+    return Math.abs(value).toFixed(5) + " " + (value < 0 ? "S" : "N");
+  }
 
-    if (!info.isValid || !info.latitudeValid || !info.longitudeValid) {
+  function formatLongitude(value) {
+    return Math.abs(value).toFixed(5) + " " + (value < 0 ? "W" : "E");
+  }
+
+  function coordinateLabel() {
+    const latitude = measurementFrozen ? frozenLatitude : positionInfo.latitude;
+    const longitude = measurementFrozen ? frozenLongitude : positionInfo.longitude;
+    const valid = measurementFrozen ? frozenPositionReady : livePositionReady;
+
+    if (!valid) {
       return "Waiting for GNSS";
     }
 
-    return info.latitude.toFixed(5) + " N, " + info.longitude.toFixed(5) + " E";
+    return formatLatitude(latitude) + ", " + formatLongitude(longitude);
   }
 
-  function sensorTimestampLabel() {
-    return "Updated: " + Qt.formatTime(new Date(), "hh:mm");
+  function sensorSourceLabel() {
+    return "Sources: heading " + headingSensorLabel() + " | tilt " + tiltSensorLabel();
+  }
+
+  function canSaveMeasurement() {
+    return saveReady;
+  }
+
+  function saveButtonLabel() {
+    if (saveReady) {
+      return "Save";
+    }
+
+    if (measurementFrozen) {
+      return "Need GNSS";
+    }
+
+    return "Freeze first";
   }
 
   function positionStatusLabel() {
     const info = positionInfo;
     let parts = [];
 
-    parts.push(info.isValid ? "GNSS ready" : "GNSS unavailable");
-    parts.push(isNaN(liveHeading) ? "Compass unavailable" : "Compass ready");
+    parts.push(livePositionReady ? "GNSS ready" : "GNSS unavailable");
+    parts.push(isNaN(liveHeading) ? "Heading unavailable" : "Heading ready (" + headingSensorLabel() + ")");
     parts.push(isNaN(liveTilt) ? "Tilt unavailable" : "Tilt ready (" + tiltSensorLabel() + ")");
-    parts.push(measurementFrozen ? "Locked" : "Live");
+    parts.push(saveReady ? "Ready to save" : (measurementFrozen ? "Locked" : "Live"));
 
     return parts.join(" | ");
   }
 
   function freezeButtonLabel() {
-    return measurementFrozen ? "Unlock measurement" : "Lock current measurement";
+    return measurementFrozen ? "Unlock reading" : "Freeze current reading";
+  }
+
+  FeatureModel {
+    id: measurementFeatureModel
+    project: qgisProject
+    modelMode: FeatureModel.SingleFeatureModel
+
+    onWarning: function(text) {
+      if (text && text.length > 0) {
+        iface.mainWindow().displayToast(text);
+      }
+    }
+  }
+
+  Compass {
+    id: compassSensor
+    active: root.compassVisible
+
+    onReadingChanged: {
+      if (!reading) {
+        return;
+      }
+
+      root.hasCompassReading = true;
+      root.compassCalibrationLevel = reading.calibrationLevel;
+      root.compassHeadingDeg = root.smoothAngle(
+        root.compassHeadingDeg,
+        root.normalizeAzimuth(reading.azimuth),
+        0.25
+      );
+      root.updateRotationMapping();
+    }
+  }
+
+  RotationSensor {
+    id: rotationSensor
+    active: root.compassVisible
+
+    onReadingChanged: {
+      if (!reading) {
+        return;
+      }
+
+      root.hasRotationReading = true;
+      root.rotationXDeg = root.smoothScalar(root.rotationXDeg, reading.x, 0.25);
+      root.rotationYDeg = root.smoothScalar(root.rotationYDeg, reading.y, 0.25);
+      root.rotationZDeg = rotationSensor.hasZ
+        ? root.smoothAngle(root.rotationZDeg, reading.z, 0.25)
+        : NaN;
+      root.updateRotationMapping();
+    }
+  }
+
+  Accelerometer {
+    id: accelerometerSensor
+    active: root.compassVisible
+    accelerationMode: Accelerometer.Gravity
+
+    onReadingChanged: {
+      if (!reading) {
+        return;
+      }
+
+      root.hasAccelReading = true;
+      root.accelX = root.smoothScalar(root.accelX, reading.x, 0.25);
+      root.accelY = root.smoothScalar(root.accelY, reading.y, 0.25);
+      root.accelZ = root.smoothScalar(root.accelZ, reading.z, 0.25);
+      root.updateRotationMapping();
+    }
+  }
+
+  Timer {
+    interval: 200
+    repeat: true
+    running: root.compassVisible
+    triggeredOnStart: true
+
+    onTriggered: {
+      root.updatePositioningFallbacks();
+      root.updateRotationMapping();
+    }
   }
 
   QfToolButton {
@@ -613,31 +1635,23 @@ Item {
     }
   }
 
-  Dialog {
-    id: createLayerDialog
-    parent: iface.mainWindow().contentItem
-    modal: true
-    visible: false
-    title: "Create measurement layer?"
-
-    property string text: ""
-
-    standardButtons: Dialog.Ok | Dialog.Cancel
-
-    onAccepted: root.createLayerAndOpenCompass()
-
-    contentItem: Label {
-      text: createLayerDialog.text + "\n\nCreate a temporary point layer in this project now?"
-      wrapMode: Text.WordWrap
-      width: 300
-      color: root.textPrimary
-    }
-  }
-
   Component.onCompleted: {
     seedTypeForMode();
     iface.addItemToPluginsToolbar(compassLauncher);
+    requestDialPaints();
     iface.mainWindow().displayToast("Geo compass plugin ready");
+  }
+
+  Component.onDestruction: {
+    compassVisible = false;
+    compassLauncher.visible = false;
+
+    try {
+      if (compassLauncher.parent) {
+        compassLauncher.parent = null;
+      }
+    } catch (error) {
+    }
   }
 
   Rectangle {
@@ -719,7 +1733,7 @@ Item {
             }
 
             Text {
-              text: activeMode === "planar" ? "Planar structures" : "Linear structures"
+              text: modeSubtitleLabel()
               color: textMuted
               font.pixelSize: 14
             }
@@ -838,7 +1852,7 @@ Item {
               }
 
               Text {
-                text: sensorTimestampLabel()
+                text: sensorSourceLabel()
                 color: textPrimary
                 font.pixelSize: 11
               }
@@ -879,6 +1893,7 @@ Item {
 
                 MouseArea {
                   anchors.fill: parent
+                  preventStealing: true
                   onClicked: {
                     root.activeMode = "planar";
                     root.seedTypeForMode();
@@ -900,6 +1915,7 @@ Item {
 
                 MouseArea {
                   anchors.fill: parent
+                  preventStealing: true
                   onClicked: {
                     root.activeMode = "linear";
                     root.seedTypeForMode();
@@ -941,94 +1957,72 @@ Item {
               }
             }
 
-            Shape {
+            Canvas {
+              id: planarSymbolCanvas
               visible: activeMode === "planar"
               anchors.fill: mainDial
               rotation: isNaN(displayHeading) ? 0 : displayHeading
-
-              ShapePath {
-                strokeWidth: 7
-                strokeColor: planarAccent
-                fillColor: "transparent"
-                startX: width * 0.16
-                startY: height * 0.67
-                PathLine { x: width * 0.84; y: height * 0.48 }
-              }
-
-              ShapePath {
-                strokeWidth: 7
-                strokeColor: planarAccent
-                fillColor: "transparent"
-                startX: width * 0.51
-                startY: height * 0.53
-                PathLine { x: width * 0.55; y: height * 0.68 }
+              antialiasing: true
+              onVisibleChanged: requestPaint()
+              onPaint: {
+                const ctx = getContext("2d");
+                ctx.reset();
+                ctx.strokeStyle = planarAccent;
+                ctx.lineWidth = 7;
+                ctx.lineCap = "round";
+                ctx.beginPath();
+                ctx.moveTo(width * 0.22, height * 0.56);
+                ctx.lineTo(width * 0.78, height * 0.56);
+                ctx.moveTo(width * 0.50, height * 0.56);
+                ctx.lineTo(width * 0.50, height * 0.39);
+                ctx.stroke();
               }
             }
 
-            Shape {
+            Canvas {
+              id: linearSymbolCanvas
               visible: activeMode === "linear"
               anchors.fill: mainDial
               rotation: isNaN(displayHeading) ? 0 : displayHeading
+              antialiasing: true
+              onVisibleChanged: requestPaint()
+              onPaint: {
+                const ctx = getContext("2d");
+                ctx.reset();
+                ctx.strokeStyle = linearAccent;
+                ctx.lineWidth = 8;
+                ctx.lineCap = "round";
+                ctx.beginPath();
+                ctx.moveTo(width * 0.50, height * 0.80);
+                ctx.lineTo(width * 0.50, height * 0.30);
+                ctx.stroke();
 
-              ShapePath {
-                strokeWidth: 8
-                strokeColor: linearAccent
-                fillColor: "transparent"
-                startX: width * 0.50
-                startY: height * 0.12
-                PathLine { x: width * 0.50; y: height * 0.72 }
-              }
-
-              ShapePath {
-                strokeWidth: 0
-                strokeColor: "transparent"
-                fillColor: linearAccent
-                startX: width * 0.50
-                startY: height * 0.82
-                PathLine { x: width * 0.44; y: height * 0.70 }
-                PathLine { x: width * 0.56; y: height * 0.70 }
-                PathLine { x: width * 0.50; y: height * 0.82 }
-              }
-            }
-
-            Shape {
-              anchors.fill: mainDial
-
-              ShapePath {
-                strokeWidth: 1.2
-                strokeColor: "#b9b9b9"
-                fillColor: "transparent"
-                startX: width * 0.08
-                startY: height * 0.62
-                PathQuad {
-                  x: width * 0.92
-                  y: height * 0.44
-                  controlX: width * 0.54
-                  controlY: height * 0.96
-                }
+                ctx.fillStyle = linearAccent;
+                ctx.beginPath();
+                ctx.moveTo(width * 0.50, height * 0.17);
+                ctx.lineTo(width * 0.60, height * 0.32);
+                ctx.lineTo(width * 0.50, height * 0.28);
+                ctx.lineTo(width * 0.40, height * 0.32);
+                ctx.closePath();
+                ctx.fill();
               }
             }
 
-            Shape {
-              visible: activeMode === "linear"
+            Canvas {
+              id: planarGuideCanvas
+              visible: activeMode === "planar"
               anchors.fill: mainDial
-
-              ShapePath {
-                strokeWidth: 1.2
-                strokeColor: "#b9b9b9"
-                fillColor: "transparent"
-                startX: width * 0.18
-                startY: height * 0.56
-                PathLine { x: width * 0.44; y: height * 0.61 }
-              }
-
-              ShapePath {
-                strokeWidth: 1.2
-                strokeColor: "#b9b9b9"
-                fillColor: "transparent"
-                startX: width * 0.58
-                startY: height * 0.60
-                PathLine { x: width * 0.83; y: height * 0.67 }
+              antialiasing: true
+              onVisibleChanged: requestPaint()
+              onPaint: {
+                const ctx = getContext("2d");
+                ctx.reset();
+                ctx.strokeStyle = "#b9b9b9";
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.moveTo(width * 0.08, height * 0.62);
+                ctx.quadraticCurveTo(width * 0.54, height * 0.96, width * 0.92, height * 0.44);
+                ctx.stroke();
               }
             }
 
@@ -1066,19 +2060,22 @@ Item {
                 font.bold: false
               }
 
-              Shape {
+              Canvas {
+                id: headingMarkerCanvas
                 anchors.fill: parent
                 rotation: isNaN(displayHeading) ? 0 : displayHeading
-
-                ShapePath {
-                  strokeWidth: 0
-                  fillColor: planarAccent
-                  startX: width * 0.50
-                  startY: 8
-                  PathLine { x: width * 0.57; y: 24 }
-                  PathLine { x: width * 0.50; y: 21 }
-                  PathLine { x: width * 0.43; y: 24 }
-                  PathLine { x: width * 0.50; y: 8 }
+                antialiasing: true
+                onPaint: {
+                  const ctx = getContext("2d");
+                  ctx.reset();
+                  ctx.fillStyle = activeAccent;
+                  ctx.beginPath();
+                  ctx.moveTo(width * 0.50, 8);
+                  ctx.lineTo(width * 0.57, 24);
+                  ctx.lineTo(width * 0.50, 21);
+                  ctx.lineTo(width * 0.43, 24);
+                  ctx.closePath();
+                  ctx.fill();
                 }
               }
             }
@@ -1110,18 +2107,22 @@ Item {
             Row {
               anchors.horizontalCenter: parent.horizontalCenter
               y: mainDial.y + mainDial.height + 66
-              spacing: 32
+              spacing: 18
 
-              Rectangle {
-                width: 88
-                height: 2
-                color: greyLine
+              Text {
+                width: 124
+                text: tiltDisplayLabel()
+                color: textMuted
+                font.pixelSize: 12
+                horizontalAlignment: Text.AlignHCenter
               }
 
-              Rectangle {
-                width: 88
-                height: 2
-                color: greyLine
+              Text {
+                width: 124
+                text: headingDisplayLabel()
+                color: textMuted
+                font.pixelSize: 12
+                horizontalAlignment: Text.AlignHCenter
               }
             }
           }
@@ -1143,119 +2144,10 @@ Item {
 
             Text {
               anchors.centerIn: parent
-              text: measurementFrozen ? "Locked " + modeDisplayName + " reading" : modeDisplayName + " measurement"
+              text: readoutBannerLabel()
               color: "white"
               font.pixelSize: 21
               font.bold: true
-            }
-          }
-
-          Rectangle {
-            width: 320
-            height: 56
-            radius: 8
-            color: fieldBg
-            anchors.horizontalCenter: parent.horizontalCenter
-
-            TextField {
-              anchors.fill: parent
-              anchors.leftMargin: 16
-              anchors.rightMargin: 16
-              placeholderText: "Locality"
-              text: root.localityText
-              color: "white"
-              font.pixelSize: 20
-              font.bold: true
-              placeholderTextColor: "#d7d7d7"
-              horizontalAlignment: TextInput.AlignHCenter
-              verticalAlignment: TextInput.AlignVCenter
-              background: Item {}
-              onTextChanged: root.localityText = text
-            }
-          }
-
-          Rectangle {
-            width: 320
-            height: 56
-            radius: 8
-            color: fieldBg
-            anchors.horizontalCenter: parent.horizontalCenter
-
-            TextField {
-              anchors.fill: parent
-              anchors.leftMargin: 16
-              anchors.rightMargin: 16
-              placeholderText: "Type"
-              text: root.typeText
-              color: "white"
-              font.pixelSize: 20
-              font.bold: true
-              placeholderTextColor: "#d7d7d7"
-              horizontalAlignment: TextInput.AlignHCenter
-              verticalAlignment: TextInput.AlignVCenter
-              background: Item {}
-              onTextChanged: {
-                root.typeText = text;
-                root.lastModeTypeSeed = text;
-              }
-            }
-          }
-
-          Text {
-            width: 320
-            anchors.horizontalCenter: parent.horizontalCenter
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-            text: "Examples: " + typeExampleText
-            color: textMuted
-            font.pixelSize: 12
-          }
-
-          Rectangle {
-            width: 320
-            height: 56
-            radius: 8
-            color: fieldBg
-            anchors.horizontalCenter: parent.horizontalCenter
-
-            TextField {
-              anchors.fill: parent
-              anchors.leftMargin: 16
-              anchors.rightMargin: 16
-              placeholderText: "Geology"
-              text: root.geologyText
-              color: "white"
-              font.pixelSize: 20
-              font.bold: true
-              placeholderTextColor: "#d7d7d7"
-              horizontalAlignment: TextInput.AlignHCenter
-              verticalAlignment: TextInput.AlignVCenter
-              background: Item {}
-              onTextChanged: root.geologyText = text
-            }
-          }
-
-          Rectangle {
-            width: 320
-            height: 56
-            radius: 8
-            color: fieldBg
-            anchors.horizontalCenter: parent.horizontalCenter
-
-            TextField {
-              anchors.fill: parent
-              anchors.leftMargin: 16
-              anchors.rightMargin: 16
-              placeholderText: "Comment"
-              text: root.noteText
-              color: "white"
-              font.pixelSize: 20
-              font.bold: true
-              placeholderTextColor: "#d7d7d7"
-              horizontalAlignment: TextInput.AlignHCenter
-              verticalAlignment: TextInput.AlignVCenter
-              background: Item {}
-              onTextChanged: root.noteText = text
             }
           }
 
@@ -1278,9 +2170,11 @@ Item {
 
             MouseArea {
               anchors.fill: parent
+              preventStealing: true
               onClicked: {
                 if (root.measurementFrozen) {
                   root.clearFrozenMeasurement();
+                  iface.mainWindow().displayToast("Live sensor readout resumed");
                 } else {
                   root.freezeMeasurement();
                 }
@@ -1292,22 +2186,47 @@ Item {
             width: 320
             height: 60
             radius: 10
-            color: saveBg
-            border.color: "#6fd694"
+            color: saveReady ? saveBg : "#cfd8cf"
+            border.color: saveReady ? "#6fd694" : "#aab5aa"
             border.width: 1
             anchors.horizontalCenter: parent.horizontalCenter
 
             Text {
               anchors.centerIn: parent
-              text: "Save"
-              color: saveText
+              text: saveButtonLabel()
+              color: saveReady ? saveText : "#eff3ef"
               font.pixelSize: 24
               font.bold: true
             }
 
             MouseArea {
               anchors.fill: parent
+              preventStealing: true
               onClicked: root.saveMeasurement(root.activeMode)
+            }
+          }
+
+          Rectangle {
+            width: 320
+            height: 48
+            radius: 8
+            color: "#7a7a7a"
+            border.color: "#676767"
+            border.width: 1
+            anchors.horizontalCenter: parent.horizontalCenter
+
+            Text {
+              anchors.centerIn: parent
+              text: "Back to map"
+              color: "white"
+              font.pixelSize: 18
+              font.bold: true
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              preventStealing: true
+              onClicked: root.closeCompass()
             }
           }
 
@@ -1316,7 +2235,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            text: leftValueLabel + " / " + rightValueLabel + " | " + positionStatusLabel()
+            text: positionStatusLabel()
             color: textMuted
             font.pixelSize: 12
           }
@@ -1329,6 +2248,15 @@ Item {
             text: "Target layer: " + measurementLayerName
             color: textMuted
             font.pixelSize: 12
+          }
+
+          Text {
+            width: 330
+            anchors.horizontalCenter: parent.horizontalCenter
+            horizontalAlignment: Text.AlignHCenter
+            text: "Plugin " + pluginVersionLabel
+            color: textMuted
+            font.pixelSize: 11
           }
 
           Rectangle {
@@ -1348,7 +2276,7 @@ Item {
 
               Text {
                 width: parent.width
-                text: "Sensor debug"
+                text: "Live sensor readout"
                 color: textPrimary
                 font.pixelSize: 15
                 font.bold: true
@@ -1359,9 +2287,27 @@ Item {
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
+                text: sensorSourceSummaryLabel()
+                color: textMuted
+                font.pixelSize: 12
+              }
+
+              Text {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
                 text: sensorDebugMultilineLabel()
                 color: textPrimary
                 font.pixelSize: 14
+              }
+
+              Text {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                text: sensorGuidanceLabel()
+                color: textMuted
+                font.pixelSize: 12
               }
             }
           }
@@ -1371,7 +2317,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            text: sensorDebugLabel()
+            text: "Raw values: " + sensorDebugLabel()
             color: textMuted
             font.pixelSize: 11
           }
