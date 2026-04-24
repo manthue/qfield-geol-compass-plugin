@@ -63,35 +63,13 @@ Recommended shapefile fields:
 - `plunge` `Real`
 - `dip_dir` `Real`
 - `dip_ang` `Real`
-- `kind` `Text`
-- `structure` `Text`
-- `type` `Text`
-- `Geology` `Text`
-- `azimuth` `Real`
-- `tilt` `Real`
-- `sensor` `Text`
-- `created_utc` `Text`
-  or shapefile-safe `createdutc`
-- `Locality` `Text`
-- `Comment` `Text`
-- `notes` `Text`
-- `lat_wgs84` `Real`
-- `lon_wgs84` `Real`
+- `latitude` `Real`
+- `longitude` `Real`
+- `elevation` `Real`
 
 For linear measurements, `mode` is set to `linear`, `trend` and `plunge` are populated, and the planar fields are cleared. For planar measurements, `mode` is set to `planar`, `dip_dir` and `dip_ang` are populated, and the linear fields are cleared.
 
-The `type` field is the geological structure class within the chosen mode. Typical values are:
-
-- planar: `Bedding`, `Cleavage`, `Joint`, `Fault`
-- linear: `Lineation`, `Slickenside`, `Fold Axis`
-
-The value entered in the form is written to both `type` and `structure` when those fields exist.
-
-The locality and free-text note fields are written to `Locality` and `Comment` when those fields exist. The plugin also accepts lowercase `locality` and `comment` field names for compatibility.
-
-Lithology can be entered in the form and is written to `Geology` when that field exists. The plugin also accepts lowercase `geology`.
-
-Only the geometry and whichever of these fields exist in the target layer are written. This means the plugin can also work with slimmer schemas, as long as the layer exists and is editable.
+The plugin only requires the geometry plus these fields. If the layer includes additional optional fields, the plugin will still write them when present.
 
 ## Shapefile note
 
@@ -113,7 +91,7 @@ To use it as a QField project plugin, copy `main.qml` next to that project and r
 
 - `geo_compass_demo.qml`
 
-The starter project now includes a ready-made `geology_measurements` GeoPackage layer and map symbols for planar and linear readings.
+The starter project now points to `shapefile/geology_measurements.shp` and includes the map symbols used for planar and linear readings.
 
 ## Current capabilities
 

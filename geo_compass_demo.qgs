@@ -19,7 +19,7 @@
     <customproperties>
       <Option/>
     </customproperties>
-    <layer-tree-layer providerKey="ogr" expanded="1" checked="Qt::Checked" source="./geology_measurements.gpkg|layername=geology_measurements" id="geology_measurements_ogr_1" name="geology_measurements"/>
+    <layer-tree-layer providerKey="ogr" expanded="1" checked="Qt::Checked" source="./shapefile/geology_measurements.shp" id="geology_measurements_ogr_1" name="geology_measurements"/>
   </layer-tree-group>
   <snapping-settings enabled="0" mode="2" type="1" unit="1" tolerance="12" self-snapping="0" intersection-snapping="0" min-scale="0" max-scale="0">
     <individual-layer-settings/>
@@ -77,7 +77,7 @@
   <projectlayers>
     <maplayer autoRefreshEnabled="0" geometry="Point" type="vector" simplifyDrawingHints="1" simplifyDrawingTol="1" labelsEnabled="0" styleCategories="AllStyleCategories" refreshOnNotifyEnabled="0" autoRefreshTime="0" hasScaleBasedVisibilityFlag="0" maxScale="0" minScale="100000000" refreshOnNotifyMessage="" simplifyDrawingTolUnitScale="3x:0,0,0,0,0,0" simplifyAlgorithm="0" readOnly="0" simplifyMaxScale="1" simplifyLocal="1">
       <id>geology_measurements_ogr_1</id>
-      <datasource>./geology_measurements.gpkg|layername=geology_measurements</datasource>
+      <datasource>./shapefile/geology_measurements.shp</datasource>
       <keywordList>
         <value></value>
       </keywordList>
@@ -249,7 +249,6 @@
             </layer>
           </symbol>
         </source-symbol>
-        <rotation field="azimuth"/>
         <sizescale/>
       </renderer-v2>
       <customproperties>
@@ -281,19 +280,9 @@
         <field name="plunge" configurationFlags="None"/>
         <field name="dip_dir" configurationFlags="None"/>
         <field name="dip_ang" configurationFlags="None"/>
-        <field name="kind" configurationFlags="None"/>
-        <field name="structure" configurationFlags="None"/>
-        <field name="type" configurationFlags="None"/>
-        <field name="Geology" configurationFlags="None"/>
-        <field name="azimuth" configurationFlags="None"/>
-        <field name="tilt" configurationFlags="None"/>
-        <field name="sensor" configurationFlags="None"/>
-        <field name="created_utc" configurationFlags="None"/>
-        <field name="Locality" configurationFlags="None"/>
-        <field name="Comment" configurationFlags="None"/>
-        <field name="notes" configurationFlags="None"/>
-        <field name="lat_wgs84" configurationFlags="None"/>
-        <field name="lon_wgs84" configurationFlags="None"/>
+        <field name="latitude" configurationFlags="None"/>
+        <field name="longitude" configurationFlags="None"/>
+        <field name="elevation" configurationFlags="None"/>
       </fieldConfiguration>
       <aliases>
         <alias field="mode" index="0" name="Mode"/>
@@ -301,19 +290,9 @@
         <alias field="plunge" index="2" name="Plunge"/>
         <alias field="dip_dir" index="3" name="Dip direction"/>
         <alias field="dip_ang" index="4" name="Dip angle"/>
-        <alias field="kind" index="5" name="Kind"/>
-        <alias field="structure" index="6" name="Structure"/>
-        <alias field="type" index="7" name="Type"/>
-        <alias field="Geology" index="8" name="Geology"/>
-        <alias field="azimuth" index="9" name="Azimuth"/>
-        <alias field="tilt" index="10" name="Tilt"/>
-        <alias field="sensor" index="11" name="Sensor"/>
-        <alias field="created_utc" index="12" name="Created UTC"/>
-        <alias field="Locality" index="13" name="Locality"/>
-        <alias field="Comment" index="14" name="Comment"/>
-        <alias field="notes" index="15" name="Notes"/>
-        <alias field="lat_wgs84" index="16" name="Latitude"/>
-        <alias field="lon_wgs84" index="17" name="Longitude"/>
+        <alias field="latitude" index="5" name="Latitude"/>
+        <alias field="longitude" index="6" name="Longitude"/>
+        <alias field="elevation" index="7" name="Elevation"/>
       </aliases>
       <defaults/>
       <constraints/>
@@ -322,10 +301,13 @@
       <attributetableconfig actionWidgetStyle="dropDown" sortOrder="0" sortExpression="">
         <columns>
           <column hidden="0" type="field" width="-1" name="mode"/>
-          <column hidden="0" type="field" width="-1" name="type"/>
-          <column hidden="0" type="field" width="-1" name="Geology"/>
-          <column hidden="0" type="field" width="-1" name="Locality"/>
-          <column hidden="0" type="field" width="-1" name="Comment"/>
+          <column hidden="0" type="field" width="-1" name="dip_dir"/>
+          <column hidden="0" type="field" width="-1" name="dip_ang"/>
+          <column hidden="0" type="field" width="-1" name="trend"/>
+          <column hidden="0" type="field" width="-1" name="plunge"/>
+          <column hidden="0" type="field" width="-1" name="latitude"/>
+          <column hidden="0" type="field" width="-1" name="longitude"/>
+          <column hidden="0" type="field" width="-1" name="elevation"/>
           <column hidden="1" type="actions" width="-1"/>
         </columns>
       </attributetableconfig>
@@ -335,25 +317,15 @@
         <field editable="1" name="plunge"/>
         <field editable="1" name="dip_dir"/>
         <field editable="1" name="dip_ang"/>
-        <field editable="1" name="kind"/>
-        <field editable="1" name="structure"/>
-        <field editable="1" name="type"/>
-        <field editable="1" name="Geology"/>
-        <field editable="1" name="azimuth"/>
-        <field editable="1" name="tilt"/>
-        <field editable="1" name="sensor"/>
-        <field editable="1" name="created_utc"/>
-        <field editable="1" name="Locality"/>
-        <field editable="1" name="Comment"/>
-        <field editable="1" name="notes"/>
-        <field editable="1" name="lat_wgs84"/>
-        <field editable="1" name="lon_wgs84"/>
+        <field editable="1" name="latitude"/>
+        <field editable="1" name="longitude"/>
+        <field editable="1" name="elevation"/>
       </editable>
       <labelOnTop/>
       <reuseLastValue/>
       <dataDefinedFieldProperties/>
       <widgets/>
-      <previewExpression>"type"</previewExpression>
+      <previewExpression>"mode"</previewExpression>
       <mapTip enabled="0"></mapTip>
       <layerGeometryType>0</layerGeometryType>
     </maplayer>

@@ -16,6 +16,7 @@ Item {
   property real frozenTilt: NaN
   property real frozenLatitude: NaN
   property real frozenLongitude: NaN
+  property real frozenElevation: NaN
   property real lastSavedLatitude: NaN
   property real lastSavedLongitude: NaN
   property real compassHeadingDeg: NaN
@@ -33,7 +34,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.35"
+  readonly property string pluginVersionLabel: "v0.3.36"
 
   property string localityText: ""
   property string typeText: ""
@@ -131,6 +132,39 @@ Item {
 
   function currentPositionInfo() {
     return iface.positioning().positionInformation;
+  }
+
+  function positionNumericValue(info, valueKey, validKey) {
+    if (!info) {
+      return NaN;
+    }
+
+    const value = Number(memberValue(info, valueKey));
+    if (isNaN(value)) {
+      return NaN;
+    }
+
+    const valid = memberValue(info, validKey);
+    if (valid === undefined || valid === null || Boolean(valid)) {
+      return value;
+    }
+
+    return NaN;
+  }
+
+  function currentElevationValue(info) {
+    const position = info ? info : currentPositionInfo();
+    let value = positionNumericValue(position, "elevation", "elevationValid");
+    if (!isNaN(value)) {
+      return value;
+    }
+
+    value = positionNumericValue(position, "altitude", "altitudeValid");
+    if (!isNaN(value)) {
+      return value;
+    }
+
+    return NaN;
   }
 
   function updatePositioningFallbacks() {
@@ -671,6 +705,7 @@ Item {
     frozenTilt = tilt;
     frozenLatitude = info.latitude;
     frozenLongitude = info.longitude;
+    frozenElevation = currentElevationValue(info);
     measurementFrozen = true;
     iface.mainWindow().displayToast("Sensor readout and position frozen");
   }
@@ -681,6 +716,7 @@ Item {
     frozenTilt = NaN;
     frozenLatitude = NaN;
     frozenLongitude = NaN;
+    frozenElevation = NaN;
   }
 
   function currentSensorTag() {
@@ -696,12 +732,17 @@ Item {
     return "qt_internal";
   }
 
-  function layerByName(name) {
+  function layersByName(name) {
     const matches = qgisProject.mapLayersByName(name);
-    if (!matches || matches.length === 0) {
+    return matches ? matches : [];
+  }
+
+  function layerByName(name) {
+    const matches = layersByName(name);
+    if (collectionLength(matches) === 0) {
       return null;
     }
-    return matches[0];
+    return collectionItem(matches, 0);
   }
 
   function memberValue(target, memberName) {
@@ -724,6 +765,29 @@ Item {
     return member;
   }
 
+  function callMember(target, memberName) {
+    if (!target || !memberName) {
+      return undefined;
+    }
+
+    const member = target[memberName];
+    if (typeof member !== "function") {
+      return undefined;
+    }
+
+    let args = [];
+    for (let i = 2; i < arguments.length; ++i) {
+      args.push(arguments[i]);
+    }
+
+    try {
+      return member.apply(target, args);
+    } catch (error) {
+    }
+
+    return undefined;
+  }
+
   function collectionLength(collection) {
     if (!collection) {
       return 0;
@@ -739,6 +803,12 @@ Item {
     const numericCount = Number(countValue);
     if (!isNaN(numericCount)) {
       return numericCount;
+    }
+
+    const sizeValue = memberValue(collection, "size");
+    const numericSize = Number(sizeValue);
+    if (!isNaN(numericSize)) {
+      return numericSize;
     }
 
     return 0;
@@ -796,6 +866,34 @@ Item {
     return fieldsValue ? fieldsValue : [];
   }
 
+  function stringListValue(collection) {
+    if (!collection) {
+      return [];
+    }
+
+    if (Array.isArray(collection)) {
+      let values = [];
+      for (let i = 0; i < collection.length; ++i) {
+        const item = collection[i];
+        if (item !== undefined && item !== null) {
+          values.push(String(item));
+        }
+      }
+      return values;
+    }
+
+    let values = [];
+    const itemCount = collectionLength(collection);
+    for (let i = 0; i < itemCount; ++i) {
+      const item = collectionItem(collection, i);
+      if (item !== undefined && item !== null) {
+        values.push(String(item));
+      }
+    }
+
+    return values;
+  }
+
   function fieldNameValue(field) {
     const nameValue = memberValue(field, "name");
     if (nameValue === undefined || nameValue === null) {
@@ -803,6 +901,48 @@ Item {
     }
 
     return String(nameValue);
+  }
+
+  function layerFieldNames(layer) {
+    const fields = layerFieldsValue(layer);
+    const namedValues = stringListValue(memberValue(fields, "names"));
+    if (namedValues.length > 0) {
+      return namedValues;
+    }
+
+    let values = [];
+    const fieldCount = collectionLength(fields);
+    for (let i = 0; i < fieldCount; ++i) {
+      const currentName = fieldNameValue(collectionItem(fields, i));
+      if (currentName.length > 0) {
+        values.push(currentName);
+      }
+    }
+
+    return values;
+  }
+
+  function resolvedFieldNameByLookup(target, requestedName, fieldNames) {
+    if (!target || !requestedName) {
+      return "";
+    }
+
+    const lookupMethods = ["lookupField", "indexFromName", "indexOf", "fieldNameIndex"];
+    for (let i = 0; i < lookupMethods.length; ++i) {
+      const lookupIndex = callMember(target, lookupMethods[i], requestedName);
+      const numericIndex = Number(lookupIndex);
+      if (isNaN(numericIndex) || numericIndex < 0) {
+        continue;
+      }
+
+      if (numericIndex < fieldNames.length) {
+        return fieldNames[numericIndex];
+      }
+
+      return requestedName;
+    }
+
+    return "";
   }
 
   function layerGeometryTypeValue(layer) {
@@ -856,20 +996,30 @@ Item {
       return "";
     }
 
-    const fields = layerFieldsValue(layer);
-    const fieldCount = collectionLength(fields);
-    if (fieldCount === 0) {
-      return "";
-    }
-
     const requestedName = String(fieldName);
     const requestedLower = requestedName.toLowerCase();
     const requestedCompact = requestedLower.replace(/[^a-z0-9]/g, "");
+    const fieldNames = layerFieldNames(layer);
+    if (fieldNames.length === 0) {
+      return "";
+    }
+
+    const fields = layerFieldsValue(layer);
+    const directFieldLookup = resolvedFieldNameByLookup(fields, requestedName, fieldNames);
+    if (directFieldLookup.length > 0) {
+      return directFieldLookup;
+    }
+
+    const directLayerLookup = resolvedFieldNameByLookup(layer, requestedName, fieldNames);
+    if (directLayerLookup.length > 0) {
+      return directLayerLookup;
+    }
+
     let caseInsensitiveMatch = "";
     let compactMatch = "";
 
-    for (let i = 0; i < fieldCount; ++i) {
-      const currentName = fieldNameValue(collectionItem(fields, i));
+    for (let i = 0; i < fieldNames.length; ++i) {
+      const currentName = fieldNames[i];
       if (currentName.length === 0) {
         continue;
       }
@@ -927,15 +1077,21 @@ Item {
   }
 
   function findCompatibleMeasurementLayer() {
-    const preferredLayer = layerByName(measurementLayerName);
-    if (preferredLayer) {
-      const preferredMissing = missingRequiredFields(preferredLayer);
-      const preferredMessage = compatibleLayerMessage(preferredLayer, preferredMissing);
-      if (preferredMessage.length === 0) {
+    const preferredLayers = layersByName(measurementLayerName);
+    let preferredMessage = "";
+    const preferredCount = collectionLength(preferredLayers);
+    for (let i = 0; i < preferredCount; ++i) {
+      const preferredLayer = collectionItem(preferredLayers, i);
+      const currentMessage = compatibleLayerMessage(preferredLayer, missingRequiredFields(preferredLayer));
+      if (currentMessage.length === 0) {
         return {
           layer: preferredLayer,
           message: ""
         };
+      }
+
+      if (preferredMessage.length === 0) {
+        preferredMessage = currentMessage;
       }
     }
 
@@ -959,10 +1115,10 @@ Item {
       }
     }
 
-    if (preferredLayer) {
+    if (preferredMessage.length > 0) {
       return {
         layer: null,
-        message: compatibleLayerMessage(preferredLayer, missingRequiredFields(preferredLayer))
+        message: preferredMessage
       };
     }
 
@@ -1118,7 +1274,7 @@ Item {
       };
     }
 
-    if (!layerByName(candidateName) && FileUtils.fileExists(candidatePath)) {
+    if (FileUtils.fileExists(candidatePath)) {
       const loadedExistingLayer = loadPersistentMeasurementLayer(candidateName, candidatePath);
       if (loadedExistingLayer.layer) {
         return {
@@ -1354,6 +1510,7 @@ Item {
     const longitude = measurementFrozen
       ? frozenLongitude
       : (info.longitudeValid ? info.longitude : NaN);
+    const elevation = measurementFrozen ? frozenElevation : currentElevationValue(info);
     const geometry = geometryFromCoordinates(longitude, latitude);
     const targetLayer = targetMeasurementLayer ? targetMeasurementLayer : layerByName(measurementLayerName);
     const layerLabel = targetLayerLabel(targetLayer);
@@ -1411,11 +1568,18 @@ Item {
     setAttributeIfPresent(feature, targetLayer, "created_utc", new Date().toISOString());
 
     if (!isNaN(latitude)) {
+      setAttributeIfPresent(feature, targetLayer, "latitude", latitude);
       setAttributeIfPresent(feature, targetLayer, "lat_wgs84", latitude);
     }
 
     if (!isNaN(longitude)) {
+      setAttributeIfPresent(feature, targetLayer, "longitude", longitude);
       setAttributeIfPresent(feature, targetLayer, "lon_wgs84", longitude);
+    }
+
+    if (!isNaN(elevation)) {
+      setAttributeIfPresent(feature, targetLayer, "elevation", elevation);
+      setAttributeIfPresent(feature, targetLayer, "altitude", elevation);
     }
 
     iface.mainWindow().displayToast("Saving " + kind + " reading to layer " + layerLabel);
