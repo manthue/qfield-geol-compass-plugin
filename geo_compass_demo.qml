@@ -34,7 +34,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.36"
+  readonly property string pluginVersionLabel: "v0.3.37"
 
   property string localityText: ""
   property string typeText: ""
@@ -1464,6 +1464,60 @@ Item {
     }
   }
 
+  function layerCommitErrorsText(layer) {
+    if (!layer) {
+      return "";
+    }
+
+    const errors = stringListValue(callMember(layer, "commitErrors"));
+    return errors.length > 0 ? errors.join(" | ") : "";
+  }
+
+  function persistFeatureToLayer(layer, feature) {
+    if (!layer || !feature) {
+      return {
+        ok: false,
+        message: "Missing layer or feature while saving the measurement."
+      };
+    }
+
+    const wasEditable = Boolean(callMember(layer, "isEditable"));
+    if (!wasEditable && !callMember(layer, "startEditing")) {
+      return {
+        ok: false,
+        message: "Failed to start editing on layer " + targetLayerLabel(layer)
+      };
+    }
+
+    if (!LayerUtils.addFeature(layer, feature)) {
+      if (!wasEditable) {
+        callMember(layer, "rollBack");
+      }
+      return {
+        ok: false,
+        message: "Failed to add the measurement feature to layer " + targetLayerLabel(layer)
+      };
+    }
+
+    if (!callMember(layer, "commitChanges", !wasEditable)) {
+      const commitErrorsText = layerCommitErrorsText(layer);
+      if (!wasEditable) {
+        callMember(layer, "rollBack");
+      }
+      return {
+        ok: false,
+        message: commitErrorsText.length > 0
+          ? "Failed to commit the measurement to layer " + targetLayerLabel(layer) + ": " + commitErrorsText
+          : "Failed to commit the measurement to layer " + targetLayerLabel(layer)
+      };
+    }
+
+    return {
+      ok: true,
+      message: ""
+    };
+  }
+
   function targetLayerLabel(layer) {
     if (!layer) {
       return measurementLayerName;
@@ -1552,13 +1606,9 @@ Item {
     if (kind === "linear") {
       setAttributeIfPresent(feature, targetLayer, "trend", heading);
       setAttributeIfPresent(feature, targetLayer, "plunge", tilt);
-      setAttributeIfPresent(feature, targetLayer, "dip_dir", null);
-      setAttributeIfPresent(feature, targetLayer, "dip_ang", null);
     } else {
       setAttributeIfPresent(feature, targetLayer, "dip_dir", heading);
       setAttributeIfPresent(feature, targetLayer, "dip_ang", tilt);
-      setAttributeIfPresent(feature, targetLayer, "trend", null);
-      setAttributeIfPresent(feature, targetLayer, "plunge", null);
     }
 
     setAttributeIfPresent(feature, targetLayer, "kind", kind);
@@ -1583,20 +1633,9 @@ Item {
     }
 
     iface.mainWindow().displayToast("Saving " + kind + " reading to layer " + layerLabel);
-    measurementFeatureModel.reset();
-    measurementFeatureModel.currentLayer = targetLayer;
-    measurementFeatureModel.feature = feature;
-    measurementFeatureModel.updateAttributesFromFeature(feature);
-
-    if (!measurementFeatureModel.changeGeometry(geometry)) {
-      measurementFeatureModel.reset();
-      iface.mainWindow().displayToast("Failed to prepare geometry for layer " + layerLabel);
-      return;
-    }
-
-    if (!measurementFeatureModel.create(true)) {
-      measurementFeatureModel.reset();
-      iface.mainWindow().displayToast("Failed to create " + kind + " measurement in layer " + layerLabel);
+    const saveResult = persistFeatureToLayer(targetLayer, feature);
+    if (!saveResult.ok) {
+      iface.mainWindow().displayToast(saveResult.message);
       return;
     }
 
