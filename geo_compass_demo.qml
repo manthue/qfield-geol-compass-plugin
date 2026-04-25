@@ -35,7 +35,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.39"
+  readonly property string pluginVersionLabel: "v0.3.40"
 
   property string localityText: ""
   property string typeText: ""
