@@ -36,7 +36,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.43"
+  readonly property string pluginVersionLabel: "v0.3.44"
 
   property string localityText: ""
   property string typeText: ""
@@ -1434,7 +1434,13 @@ Item {
       qgisProject.crs
     );
 
-    return GeometryUtils.createGeometryFromPoint(pointProject);
+    const x = Number(memberValue(pointProject, "x"));
+    const y = Number(memberValue(pointProject, "y"));
+    if (isNaN(x) || isNaN(y)) {
+      return null;
+    }
+
+    return GeometryUtils.createGeometryFromWkt("POINT(" + x + " " + y + ")");
   }
 
   function currentGeometry() {
