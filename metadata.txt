@@ -1,7 +1,7 @@
 [general]
 name=Geo Compass
-version=0.3.46
-description=Capture planar and linear structural readings in QField using direct phone sensors with rotation-plus-compass fallback logic.
+version=0.3.49
+description=Capture planar and linear structural readings in QField using guarded QField IMU and compass fallback logic.
 author=OpenAI Codex
 homepage=https://github.com/manthue/qfield-geol-compass-plugin
 icon=

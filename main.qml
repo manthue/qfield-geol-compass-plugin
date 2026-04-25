@@ -36,7 +36,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.46"
+  readonly property string pluginVersionLabel: "v0.3.49"
 
   property string localityText: ""
   property string typeText: ""
@@ -127,7 +127,16 @@ Item {
   }
 
   function currentPositionInfo() {
-    return iface.positioning().positionInformation;
+    try {
+      const positioning = iface.positioning();
+      if (!positioning) {
+        return null;
+      }
+
+      return positioning.positionInformation;
+    } catch (error) {
+      return null;
+    }
   }
 
   function positionNumericValue(info, valueKey, validKey) {
@@ -175,10 +184,26 @@ Item {
     const info = currentPositionInfo();
     let nextOrientation = NaN;
     let nextMagneticVariation = NaN;
+    let nextImuHeading = NaN;
+    let nextImuPitch = NaN;
+    let nextImuRoll = NaN;
 
     if (info) {
-      if (info.orientationValid && !isNaN(info.orientation)) {
-        nextOrientation = normalizeAzimuth(info.orientation);
+      const imuHeading = Number(memberValue(info, "imuHeading"));
+      const imuPitch = Number(memberValue(info, "imuPitch"));
+      const imuRoll = Number(memberValue(info, "imuRoll"));
+      if (Boolean(memberValue(info, "imuHeadingValid")) && !isNaN(imuHeading)) {
+        nextImuHeading = normalizeAzimuth(imuHeading);
+      }
+      if (Boolean(memberValue(info, "imuPitchValid")) && !isNaN(imuPitch)) {
+        nextImuPitch = imuPitch;
+      }
+      if (Boolean(memberValue(info, "imuRollValid")) && !isNaN(imuRoll)) {
+        nextImuRoll = imuRoll;
+      }
+
+      if (memberValue(info, "orientationValid") && !isNaN(Number(memberValue(info, "orientation")))) {
+        nextOrientation = normalizeAzimuth(Number(memberValue(info, "orientation")));
       } else {
         try {
           const orientation = iface.positioning().orientation;
@@ -190,8 +215,9 @@ Item {
         }
       }
 
-      if (!isNaN(info.magneticVariation)) {
-        nextMagneticVariation = info.magneticVariation;
+      const magneticVariation = Number(memberValue(info, "magneticVariation"));
+      if (!isNaN(magneticVariation)) {
+        nextMagneticVariation = magneticVariation;
       }
     } else {
       try {
@@ -208,6 +234,10 @@ Item {
       ? NaN
       : smoothAngle(qfieldOrientationDeg, nextOrientation, 0.25);
     magneticVariationDeg = nextMagneticVariation;
+    hasRotationReading = !isNaN(nextImuPitch) && !isNaN(nextImuRoll);
+    rotationXDeg = hasRotationReading ? smoothScalar(rotationXDeg, nextImuPitch, 0.25) : NaN;
+    rotationYDeg = hasRotationReading ? smoothScalar(rotationYDeg, nextImuRoll, 0.25) : NaN;
+    rotationZDeg = isNaN(nextImuHeading) ? NaN : smoothAngle(rotationZDeg, nextImuHeading, 0.25);
   }
 
   function vectorLength(x, y, z) {
@@ -297,6 +327,10 @@ Item {
   }
 
   function currentFallbackHeading() {
+    if (!isNaN(rotationZDeg)) {
+      return rotationZDeg;
+    }
+
     const compassHeading = currentCompassHeading();
     if (!isNaN(compassHeading)) {
       return compassHeading;
@@ -518,7 +552,7 @@ Item {
       return {
         heading: rotation.dipDirectionDeg,
         tilt: rotation.dipDeg,
-        method: "rotation + compass"
+        method: "QField IMU + heading"
       };
     }
 
@@ -540,7 +574,7 @@ Item {
       return {
         heading: rotation.trendDeg,
         tilt: rotation.plungeDeg,
-        method: "rotation + compass"
+        method: "QField IMU + heading"
       };
     }
 
@@ -586,7 +620,7 @@ Item {
 
   function tiltSensorLabel() {
     if (hasRotationReading) {
-      return "rotation sensor";
+      return "QField IMU pitch/roll";
     }
 
     if (hasAccelReading) {
@@ -656,7 +690,7 @@ Item {
       ? "Lay the back of the phone flush on the plane."
       : "Align the phone top edge with the lineation.";
 
-    return "Phone-first sensors: rotation + compass when available, accelerometer gravity fallback. " + modeGuidance;
+    return "Phone-first sensors: QField IMU when available, accelerometer gravity fallback. " + modeGuidance;
   }
 
   function formatSensorValue(valid, value) {
@@ -686,11 +720,11 @@ Item {
   function sensorDebugLabel() {
     return "Compass "
       + formatAngleValue(currentCompassHeading())
-      + " | RotX "
+      + " | IMU pitch "
       + formatAngleValue(rotationXDeg)
-      + " | RotY "
+      + " | IMU roll "
       + formatAngleValue(rotationYDeg)
-      + " | RotZ "
+      + " | IMU heading "
       + formatAngleValue(rotationZDeg)
       + " | QField "
       + formatAngleValue(qfieldOrientationDeg);
@@ -699,7 +733,7 @@ Item {
   function sensorDebugMultilineLabel() {
     return "Compass: " + formatAngleValue(currentCompassHeading())
       + "    Method: " + measurementMethodLabel()
-      + "\nRot X/Y/Z: " + formatAngleValue(rotationXDeg)
+      + "\nIMU pitch/roll/heading: " + formatAngleValue(rotationXDeg)
       + " / " + formatAngleValue(rotationYDeg)
       + " / " + formatAngleValue(rotationZDeg)
       + "\nAccel X/Y/Z: " + formatAxisValue(accelX)
@@ -763,8 +797,8 @@ Item {
 
   function currentSensorTag() {
     const method = measurementMethodLabel();
-    if (method === "rotation + compass") {
-      return "qt_rotation_compass";
+    if (method === "QField IMU + heading") {
+      return "qfield_imu_heading";
     }
 
     if (method === "gravity + compass") {
@@ -1427,20 +1461,11 @@ Item {
       return null;
     }
 
-    const pointWgs84 = GeometryUtils.point(longitude, latitude);
-    const pointProject = GeometryUtils.reprojectPoint(
-      pointWgs84,
-      CoordinateReferenceSystemUtils.wgs84Crs(),
-      qgisProject.crs
-    );
-
-    const x = Number(memberValue(pointProject, "x"));
-    const y = Number(memberValue(pointProject, "y"));
-    if (isNaN(x) || isNaN(y)) {
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
       return null;
     }
 
-    return GeometryUtils.createGeometryFromWkt("POINT(" + x + " " + y + ")");
+    return GeometryUtils.createGeometryFromWkt("POINT(" + longitude + " " + latitude + ")");
   }
 
   function currentGeometry() {
@@ -1619,20 +1644,16 @@ Item {
       return;
     }
 
-    let feature = FeatureUtils.createFeature(targetLayer, geometry, info);
+    let feature = FeatureUtils.createBlankFeature(layerFieldsValue(targetLayer), geometry);
 
     setAttributeIfPresent(feature, targetLayer, "mode", measurementKind);
 
     if (measurementKind === "linear") {
       setAttributeIfPresent(feature, targetLayer, "trend", heading);
       setAttributeIfPresent(feature, targetLayer, "plunge", tilt);
-      setAttributeIfPresent(feature, targetLayer, "dip_dir", null);
-      setAttributeIfPresent(feature, targetLayer, "dip_ang", null);
     } else {
       setAttributeIfPresent(feature, targetLayer, "dip_dir", heading);
       setAttributeIfPresent(feature, targetLayer, "dip_ang", tilt);
-      setAttributeIfPresent(feature, targetLayer, "trend", null);
-      setAttributeIfPresent(feature, targetLayer, "plunge", null);
     }
 
     setAttributeIfPresent(feature, targetLayer, "kind", measurementKind);
@@ -1656,24 +1677,9 @@ Item {
       setAttributeIfPresent(feature, targetLayer, "altitude", elevation);
     }
 
-    measurementFeatureModel.reset();
-    measurementFeatureModel.currentLayer = targetLayer;
-    measurementFeatureModel.feature = feature;
-    if (!measurementFeatureModel.updateAttributesFromFeature(feature)) {
-      measurementFeatureModel.reset();
-      iface.mainWindow().displayToast("Failed to prepare attributes for layer " + layerLabel);
-      return;
-    }
-
-    if (!measurementFeatureModel.changeGeometry(geometry)) {
-      measurementFeatureModel.reset();
-      iface.mainWindow().displayToast("Failed to prepare geometry for layer " + layerLabel);
-      return;
-    }
-
-    if (!measurementFeatureModel.create(true)) {
-      measurementFeatureModel.reset();
-      iface.mainWindow().displayToast("Failed to create " + measurementKind + " measurement in layer " + layerLabel);
+    const persisted = persistFeatureToLayer(targetLayer, feature);
+    if (!persisted.ok) {
+      iface.mainWindow().displayToast(persisted.message);
       return;
     }
 
@@ -1773,18 +1779,6 @@ Item {
     return measurementFrozen ? "Unlock reading" : "Freeze current reading";
   }
 
-  FeatureModel {
-    id: measurementFeatureModel
-    project: qgisProject
-    modelMode: FeatureModel.SingleFeatureModel
-
-    onWarning: function(text) {
-      if (text && text.length > 0) {
-        iface.mainWindow().displayToast(text);
-      }
-    }
-  }
-
   Compass {
     id: compassSensor
     active: root.compassVisible
@@ -1801,25 +1795,6 @@ Item {
         root.normalizeAzimuth(reading.azimuth),
         0.25
       );
-      root.updateRotationMapping();
-    }
-  }
-
-  RotationSensor {
-    id: rotationSensor
-    active: root.compassVisible
-
-    onReadingChanged: {
-      if (!reading) {
-        return;
-      }
-
-      root.hasRotationReading = true;
-      root.rotationXDeg = root.smoothScalar(root.rotationXDeg, reading.x, 0.25);
-      root.rotationYDeg = root.smoothScalar(root.rotationYDeg, reading.y, 0.25);
-      root.rotationZDeg = rotationSensor.hasZ
-        ? root.smoothAngle(root.rotationZDeg, reading.z, 0.25)
-        : NaN;
       root.updateRotationMapping();
     }
   }
