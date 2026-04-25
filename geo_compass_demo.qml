@@ -35,7 +35,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.40"
+  readonly property string pluginVersionLabel: "v0.3.41"
 
   property string localityText: ""
   property string typeText: ""
@@ -1648,9 +1648,13 @@ Item {
     if (measurementKind === "linear") {
       setAttributeIfPresent(feature, targetLayer, "trend", heading);
       setAttributeIfPresent(feature, targetLayer, "plunge", tilt);
+      setAttributeIfPresent(feature, targetLayer, "dip_dir", null);
+      setAttributeIfPresent(feature, targetLayer, "dip_ang", null);
     } else {
       setAttributeIfPresent(feature, targetLayer, "dip_dir", heading);
       setAttributeIfPresent(feature, targetLayer, "dip_ang", tilt);
+      setAttributeIfPresent(feature, targetLayer, "trend", null);
+      setAttributeIfPresent(feature, targetLayer, "plunge", null);
     }
 
     setAttributeIfPresent(feature, targetLayer, "kind", measurementKind);
@@ -1674,10 +1678,21 @@ Item {
       setAttributeIfPresent(feature, targetLayer, "altitude", elevation);
     }
 
-    iface.mainWindow().displayToast("Saving " + measurementKind + " reading to layer " + layerLabel);
-    const saveResult = persistFeatureToLayer(targetLayer, feature);
-    if (!saveResult.ok) {
-      iface.mainWindow().displayToast(saveResult.message);
+    iface.mainWindow().displayToast("Saving measurement...");
+    measurementFeatureModel.reset();
+    measurementFeatureModel.currentLayer = targetLayer;
+    measurementFeatureModel.feature = feature;
+    measurementFeatureModel.updateAttributesFromFeature(feature);
+
+    if (!measurementFeatureModel.changeGeometry(geometry)) {
+      measurementFeatureModel.reset();
+      iface.mainWindow().displayToast("Failed to prepare geometry for layer " + layerLabel);
+      return;
+    }
+
+    if (!measurementFeatureModel.create(true)) {
+      measurementFeatureModel.reset();
+      iface.mainWindow().displayToast("Failed to create " + measurementKind + " measurement in layer " + layerLabel);
       return;
     }
 
@@ -1685,7 +1700,7 @@ Item {
     lastSavedLongitude = longitude;
     requestMapRefresh();
     clearFrozenMeasurement();
-    iface.mainWindow().displayToast(measurementKind + " reading saved to layer " + layerLabel);
+    iface.mainWindow().displayToast("Done.");
   }
 
   function formattedWholeAngle(value) {
