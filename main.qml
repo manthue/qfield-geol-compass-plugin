@@ -36,7 +36,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.44"
+  readonly property string pluginVersionLabel: "v0.3.45"
 
   property string localityText: ""
   property string typeText: ""
@@ -1456,49 +1456,9 @@ Item {
   }
 
   function requestMapRefresh() {
-    const layer = targetMeasurementLayer ? targetMeasurementLayer : layerByName(measurementLayerName);
-
-    try {
-      if (layer) {
-        layer.triggerRepaint();
-      }
-    } catch (error) {
-    }
-
-    try {
-      const mapCanvas = iface.mapCanvas();
-      if (mapCanvas) {
-        mapCanvas.refresh(true);
-      }
-    } catch (error) {
-    }
   }
 
   function refreshMapForSavedMeasurement() {
-    const latitude = lastSavedLatitude;
-    const longitude = lastSavedLongitude;
-
-    requestMapRefresh();
-
-    if (isNaN(latitude) || isNaN(longitude)) {
-      return;
-    }
-
-    try {
-      const pointWgs84 = GeometryUtils.point(longitude, latitude);
-      const pointProject = GeometryUtils.reprojectPoint(
-        pointWgs84,
-        CoordinateReferenceSystemUtils.wgs84Crs(),
-        qgisProject.crs
-      );
-      const mapCanvas = iface.mapCanvas();
-      if (mapCanvas && pointProject) {
-        mapCanvas.jumpTo(pointProject, -1, -1, true);
-        mapCanvas.refresh(true);
-      }
-    } catch (error) {
-    }
-
     lastSavedLatitude = NaN;
     lastSavedLongitude = NaN;
   }
@@ -1719,7 +1679,6 @@ Item {
 
     lastSavedLatitude = latitude;
     lastSavedLongitude = longitude;
-    requestMapRefresh();
     clearFrozenMeasurement();
     iface.mainWindow().displayToast("Done.");
   }
