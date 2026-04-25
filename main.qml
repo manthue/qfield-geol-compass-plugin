@@ -11,6 +11,7 @@ Item {
   property var targetMeasurementLayer: null
   property string activeMode: "planar"
   property bool measurementFrozen: false
+  property bool saveButtonActive: false
   property bool compassVisible: false
   property string frozenMode: ""
   property real frozenHeading: NaN
@@ -35,7 +36,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.41"
+  readonly property string pluginVersionLabel: "v0.3.42"
 
   property string localityText: ""
   property string typeText: ""
@@ -74,7 +75,7 @@ Item {
   readonly property bool livePositionReady: positionInfo
                                           && !isNaN(positionLatitude(positionInfo))
                                           && !isNaN(positionLongitude(positionInfo))
-  readonly property bool saveReady: measurementFrozen
+  readonly property bool saveReady: saveButtonActive
 
   onActiveModeChanged: requestDialPaints()
 
@@ -735,6 +736,7 @@ Item {
     frozenLatitude = latitude;
     frozenLongitude = longitude;
     frozenElevation = currentElevationValue(info);
+    saveButtonActive = true;
     measurementFrozen = true;
     iface.mainWindow().displayToast(
       "Locked "
@@ -750,6 +752,7 @@ Item {
 
   function clearFrozenMeasurement() {
     measurementFrozen = false;
+    saveButtonActive = false;
     frozenMode = "";
     frozenHeading = NaN;
     frozenTilt = NaN;
@@ -1596,6 +1599,8 @@ Item {
       return;
     }
 
+    iface.mainWindow().displayToast("Saving measurement...");
+
     const measurementKind = measurementFrozen && frozenMode.length > 0 ? frozenMode : kind;
     const heading = measurementFrozen ? frozenHeading : liveHeading;
     const tilt = measurementFrozen ? frozenTilt : liveTilt;
@@ -1678,7 +1683,6 @@ Item {
       setAttributeIfPresent(feature, targetLayer, "altitude", elevation);
     }
 
-    iface.mainWindow().displayToast("Saving measurement...");
     measurementFeatureModel.reset();
     measurementFeatureModel.currentLayer = targetLayer;
     measurementFeatureModel.feature = feature;
@@ -2456,6 +2460,7 @@ Item {
           Rectangle {
             width: 320
             height: 60
+            z: 5
             radius: 10
             color: saveReady ? saveBg : "#cfd8cf"
             border.color: saveReady ? "#9f1117" : "#aab5aa"
@@ -2472,8 +2477,13 @@ Item {
 
             MouseArea {
               anchors.fill: parent
+              z: 10
+              enabled: true
               preventStealing: true
-              onClicked: root.saveMeasurement(root.activeMode)
+              onPressed: {
+                mouse.accepted = true;
+                root.saveMeasurement(root.activeMode);
+              }
             }
           }
 
