@@ -12,6 +12,7 @@ Item {
   property string activeMode: "planar"
   property bool measurementFrozen: false
   property bool compassVisible: false
+  property string frozenMode: ""
   property real frozenHeading: NaN
   property real frozenTilt: NaN
   property real frozenLatitude: NaN
@@ -34,7 +35,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.37"
+  readonly property string pluginVersionLabel: "v0.3.38"
 
   property string localityText: ""
   property string typeText: ""
@@ -71,11 +72,8 @@ Item {
   readonly property real displayTilt: measurementFrozen ? frozenTilt : liveTilt
   readonly property bool frozenPositionReady: !isNaN(frozenLatitude) && !isNaN(frozenLongitude)
   readonly property bool livePositionReady: positionInfo
-                                          && !isNaN(positionInfo.latitude)
-                                          && !isNaN(positionInfo.longitude)
-                                          && (positionInfo.isValid
-                                              || positionInfo.latitudeValid
-                                              || positionInfo.longitudeValid)
+                                          && !isNaN(positionLatitude(positionInfo))
+                                          && !isNaN(positionLongitude(positionInfo))
   readonly property bool saveReady: measurementFrozen
                                   && !isNaN(frozenHeading)
                                   && !isNaN(frozenTilt)
@@ -145,11 +143,19 @@ Item {
     }
 
     const valid = memberValue(info, validKey);
-    if (valid === undefined || valid === null || Boolean(valid)) {
+    if (valid === undefined || valid === null || Boolean(valid) || Boolean(memberValue(info, "isValid"))) {
       return value;
     }
 
     return NaN;
+  }
+
+  function positionLatitude(info) {
+    return positionNumericValue(info, "latitude", "latitudeValid");
+  }
+
+  function positionLongitude(info) {
+    return positionNumericValue(info, "longitude", "longitudeValid");
   }
 
   function currentElevationValue(info) {
@@ -597,21 +603,47 @@ Item {
     return orientation ? orientation.method : "none";
   }
 
+  function lockedMode() {
+    return frozenMode.length > 0 ? frozenMode : activeMode;
+  }
+
+  function modeDisplayNameFor(mode) {
+    return mode === "linear" ? "Linear" : "Planar";
+  }
+
+  function tiltDisplayLabelFor(mode) {
+    return mode === "linear" ? "Plunge" : "Dip";
+  }
+
+  function headingDisplayLabelFor(mode) {
+    return mode === "linear" ? "Trend" : "Dip Dir";
+  }
+
   function tiltDisplayLabel() {
-    return activeMode === "planar" ? "Dip" : "Plunge";
+    return tiltDisplayLabelFor(activeMode);
   }
 
   function headingDisplayLabel() {
-    return activeMode === "planar" ? "Dip Dir" : "Trend";
+    return headingDisplayLabelFor(activeMode);
   }
 
   function modeSubtitleLabel() {
     return activeMode === "planar" ? "Planar capture mode" : "Linear capture mode";
   }
 
+  function orientationSummaryLabel(mode, heading, tilt) {
+    return tiltDisplayLabelFor(mode)
+      + " "
+      + formattedTiltInteger(tilt)
+      + " / "
+      + headingDisplayLabelFor(mode)
+      + " "
+      + formattedWholeAngle(heading);
+  }
+
   function readoutBannerLabel() {
     return measurementFrozen
-      ? "Locked " + modeDisplayName.toLowerCase() + " reading"
+      ? "Locked " + modeDisplayNameFor(lockedMode()) + " | " + orientationSummaryLabel(lockedMode(), frozenHeading, frozenTilt)
       : modeDisplayName + " reading";
   }
 
@@ -681,10 +713,9 @@ Item {
     const heading = liveHeading;
     const tilt = liveTilt;
     const info = currentPositionInfo();
-    const hasUsablePosition = info
-      && !isNaN(info.latitude)
-      && !isNaN(info.longitude)
-      && (info.isValid || info.latitudeValid || info.longitudeValid);
+    const latitude = positionLatitude(info);
+    const longitude = positionLongitude(info);
+    const hasUsablePosition = !isNaN(latitude) && !isNaN(longitude);
 
     if (isNaN(heading)) {
       iface.mainWindow().displayToast("No valid heading available from the phone sensors");
@@ -703,15 +734,26 @@ Item {
 
     frozenHeading = heading;
     frozenTilt = tilt;
-    frozenLatitude = info.latitude;
-    frozenLongitude = info.longitude;
+    frozenMode = activeMode;
+    frozenLatitude = latitude;
+    frozenLongitude = longitude;
     frozenElevation = currentElevationValue(info);
     measurementFrozen = true;
-    iface.mainWindow().displayToast("Sensor readout and position frozen");
+    iface.mainWindow().displayToast(
+      "Locked "
+        + modeDisplayNameFor(frozenMode)
+        + " | "
+        + orientationSummaryLabel(frozenMode, frozenHeading, frozenTilt)
+        + " | "
+        + formatLatitude(frozenLatitude)
+        + ", "
+        + formatLongitude(frozenLongitude)
+    );
   }
 
   function clearFrozenMeasurement() {
     measurementFrozen = false;
+    frozenMode = "";
     frozenHeading = NaN;
     frozenTilt = NaN;
     frozenLatitude = NaN;
@@ -1397,12 +1439,14 @@ Item {
 
   function currentGeometry() {
     const info = currentPositionInfo();
+    const latitude = positionLatitude(info);
+    const longitude = positionLongitude(info);
 
-    if (!info.isValid || !info.latitudeValid || !info.longitudeValid) {
+    if (isNaN(latitude) || isNaN(longitude)) {
       return null;
     }
 
-    return geometryFromCoordinates(info.longitude, info.latitude);
+    return geometryFromCoordinates(longitude, latitude);
   }
 
   function requestMapRefresh() {
@@ -1555,15 +1599,16 @@ Item {
       return;
     }
 
+    const measurementKind = measurementFrozen && frozenMode.length > 0 ? frozenMode : kind;
     const heading = measurementFrozen ? frozenHeading : liveHeading;
     const tilt = measurementFrozen ? frozenTilt : liveTilt;
     const info = currentPositionInfo();
     const latitude = measurementFrozen
       ? frozenLatitude
-      : (info.latitudeValid ? info.latitude : NaN);
+      : positionLatitude(info);
     const longitude = measurementFrozen
       ? frozenLongitude
-      : (info.longitudeValid ? info.longitude : NaN);
+      : positionLongitude(info);
     const elevation = measurementFrozen ? frozenElevation : currentElevationValue(info);
     const geometry = geometryFromCoordinates(longitude, latitude);
     const targetLayer = targetMeasurementLayer ? targetMeasurementLayer : layerByName(measurementLayerName);
@@ -1601,9 +1646,9 @@ Item {
 
     let feature = FeatureUtils.createFeature(targetLayer, geometry, info);
 
-    setAttributeIfPresent(feature, targetLayer, "mode", kind);
+    setAttributeIfPresent(feature, targetLayer, "mode", measurementKind);
 
-    if (kind === "linear") {
+    if (measurementKind === "linear") {
       setAttributeIfPresent(feature, targetLayer, "trend", heading);
       setAttributeIfPresent(feature, targetLayer, "plunge", tilt);
     } else {
@@ -1611,7 +1656,7 @@ Item {
       setAttributeIfPresent(feature, targetLayer, "dip_ang", tilt);
     }
 
-    setAttributeIfPresent(feature, targetLayer, "kind", kind);
+    setAttributeIfPresent(feature, targetLayer, "kind", measurementKind);
     setAttributeIfPresent(feature, targetLayer, "azimuth", heading);
     setAttributeIfPresent(feature, targetLayer, "tilt", tilt);
     setAttributeIfPresent(feature, targetLayer, "sensor", currentSensorTag());
@@ -1632,7 +1677,7 @@ Item {
       setAttributeIfPresent(feature, targetLayer, "altitude", elevation);
     }
 
-    iface.mainWindow().displayToast("Saving " + kind + " reading to layer " + layerLabel);
+    iface.mainWindow().displayToast("Saving " + measurementKind + " reading to layer " + layerLabel);
     const saveResult = persistFeatureToLayer(targetLayer, feature);
     if (!saveResult.ok) {
       iface.mainWindow().displayToast(saveResult.message);
@@ -1643,7 +1688,7 @@ Item {
     lastSavedLongitude = longitude;
     requestMapRefresh();
     clearFrozenMeasurement();
-    iface.mainWindow().displayToast(kind + " reading saved to layer " + layerLabel);
+    iface.mainWindow().displayToast(measurementKind + " reading saved to layer " + layerLabel);
   }
 
   function formattedWholeAngle(value) {
@@ -1681,8 +1726,8 @@ Item {
   }
 
   function coordinateLabel() {
-    const latitude = measurementFrozen ? frozenLatitude : positionInfo.latitude;
-    const longitude = measurementFrozen ? frozenLongitude : positionInfo.longitude;
+    const latitude = measurementFrozen ? frozenLatitude : positionLatitude(positionInfo);
+    const longitude = measurementFrozen ? frozenLongitude : positionLongitude(positionInfo);
     const valid = measurementFrozen ? frozenPositionReady : livePositionReady;
 
     if (!valid) {
@@ -1716,10 +1761,18 @@ Item {
     const info = positionInfo;
     let parts = [];
 
+    if (measurementFrozen) {
+      parts.push("Locked " + modeDisplayNameFor(lockedMode()));
+      parts.push(orientationSummaryLabel(lockedMode(), frozenHeading, frozenTilt));
+      parts.push(coordinateLabel());
+      parts.push(saveReady ? "Ready to save" : "Not ready to save");
+      return parts.join(" | ");
+    }
+
     parts.push(livePositionReady ? "GNSS ready" : "GNSS unavailable");
     parts.push(isNaN(liveHeading) ? "Heading unavailable" : "Heading ready (" + headingSensorLabel() + ")");
     parts.push(isNaN(liveTilt) ? "Tilt unavailable" : "Tilt ready (" + tiltSensorLabel() + ")");
-    parts.push(saveReady ? "Ready to save" : (measurementFrozen ? "Locked" : "Live"));
+    parts.push("Live");
 
     return parts.join(" | ");
   }
@@ -2347,10 +2400,13 @@ Item {
 
             Text {
               anchors.centerIn: parent
+              width: parent.width - 12
               text: readoutBannerLabel()
               color: "white"
-              font.pixelSize: 21
+              font.pixelSize: measurementFrozen ? 16 : 21
               font.bold: true
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
             }
           }
 
