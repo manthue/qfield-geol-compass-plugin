@@ -19,7 +19,7 @@
     <customproperties>
       <Option/>
     </customproperties>
-    <layer-tree-layer providerKey="ogr" expanded="1" checked="Qt::Checked" source="./shapefile/geology_measurements.shp" id="geology_measurements_ogr_1" name="geology_measurements"/>
+    <layer-tree-layer providerKey="ogr" expanded="1" checked="Qt::Checked" source="./geology_measurements.gpkg|layername=geology_measurements" id="geology_measurements_ogr_1" name="geology_measurements"/>
   </layer-tree-group>
   <snapping-settings enabled="0" mode="2" type="1" unit="1" tolerance="12" self-snapping="0" intersection-snapping="0" min-scale="0" max-scale="0">
     <individual-layer-settings/>
@@ -77,7 +77,7 @@
   <projectlayers>
     <maplayer autoRefreshEnabled="0" geometry="Point" type="vector" simplifyDrawingHints="1" simplifyDrawingTol="1" labelsEnabled="0" styleCategories="AllStyleCategories" refreshOnNotifyEnabled="0" autoRefreshTime="0" hasScaleBasedVisibilityFlag="0" maxScale="0" minScale="100000000" refreshOnNotifyMessage="" simplifyDrawingTolUnitScale="3x:0,0,0,0,0,0" simplifyAlgorithm="0" readOnly="0" simplifyMaxScale="1" simplifyLocal="1">
       <id>geology_measurements_ogr_1</id>
-      <datasource>./shapefile/geology_measurements.shp</datasource>
+      <datasource>./geology_measurements.gpkg|layername=geology_measurements</datasource>
       <keywordList>
         <value></value>
       </keywordList>

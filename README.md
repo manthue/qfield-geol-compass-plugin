@@ -48,7 +48,7 @@ The save button only becomes active after a reading has been frozen successfully
 
 ## Required layers
 
-Load this existing point shapefile or equivalent editable vector layer into the QGIS project before opening it in QField.
+Load this existing point GeoPackage layer or equivalent editable vector layer into the QGIS project before opening it in QField.
 
 ### Shared measurement layer
 
@@ -56,7 +56,7 @@ Layer name:
 
 - `geology_measurements`
 
-Recommended shapefile fields:
+Recommended fields:
 
 - `mode` `Text`
 - `trend` `Real`
@@ -71,9 +71,9 @@ For linear measurements, `mode` is set to `linear`, `trend` and `plunge` are pop
 
 The plugin only requires the geometry plus these fields. If the layer includes additional optional fields, the plugin will still write them when present.
 
-## Shapefile note
+## Storage note
 
-Shapefiles work, but they are not ideal for mobile data capture because of field-name and type limits. If your workflow allows it, a GeoPackage is more robust. If you must use shapefiles, keep field names short and pre-create the files in QGIS.
+GeoPackage is recommended for mobile data capture. Shapefiles can work, but they are less robust on phones because all sidecar files must stay together and DBF field-name/type limits can make edits brittle.
 
 ## Installation
 
@@ -91,7 +91,7 @@ To use it as a QField project plugin, copy `main.qml` next to that project and r
 
 - `geo_compass_demo.qml`
 
-The starter project now points to `shapefile/geology_measurements.shp` and includes the map symbols used for planar and linear readings.
+The starter project points to `geology_measurements.gpkg` and includes the map symbols used for planar and linear readings.
 
 ## Current capabilities
 
