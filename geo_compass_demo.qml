@@ -36,7 +36,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.42"
+  readonly property string pluginVersionLabel: "v0.3.43"
 
   property string localityText: ""
   property string typeText: ""
@@ -1600,7 +1600,14 @@ Item {
     }
 
     iface.mainWindow().displayToast("Saving measurement...");
+    try {
+      saveMeasurementChecked(kind);
+    } catch (error) {
+      iface.mainWindow().displayToast("Save error: " + error);
+    }
+  }
 
+  function saveMeasurementChecked(kind) {
     const measurementKind = measurementFrozen && frozenMode.length > 0 ? frozenMode : kind;
     const heading = measurementFrozen ? frozenHeading : liveHeading;
     const tilt = measurementFrozen ? frozenTilt : liveTilt;
@@ -1686,7 +1693,11 @@ Item {
     measurementFeatureModel.reset();
     measurementFeatureModel.currentLayer = targetLayer;
     measurementFeatureModel.feature = feature;
-    measurementFeatureModel.updateAttributesFromFeature(feature);
+    if (!measurementFeatureModel.updateAttributesFromFeature(feature)) {
+      measurementFeatureModel.reset();
+      iface.mainWindow().displayToast("Failed to prepare attributes for layer " + layerLabel);
+      return;
+    }
 
     if (!measurementFeatureModel.changeGeometry(geometry)) {
       measurementFeatureModel.reset();
