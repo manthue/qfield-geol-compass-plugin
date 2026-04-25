@@ -35,7 +35,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.38"
+  readonly property string pluginVersionLabel: "v0.3.39"
 
   property string localityText: ""
   property string typeText: ""
@@ -51,7 +51,7 @@ Item {
   readonly property color dialStroke: "#202020"
   readonly property color greyLine: "#cfcfcf"
   readonly property color fieldBg: "#585858"
-  readonly property color saveBg: "#a9dfbc"
+  readonly property color saveBg: "#d71920"
   readonly property color saveText: "#ffffff"
   readonly property color modeBarBg: "#1fd2e5"
   readonly property color modeTabBg: "#f2a034"
@@ -75,9 +75,6 @@ Item {
                                           && !isNaN(positionLatitude(positionInfo))
                                           && !isNaN(positionLongitude(positionInfo))
   readonly property bool saveReady: measurementFrozen
-                                  && !isNaN(frozenHeading)
-                                  && !isNaN(frozenTilt)
-                                  && frozenPositionReady
 
   onActiveModeChanged: requestDialPaints()
 
@@ -2446,7 +2443,7 @@ Item {
             height: 60
             radius: 10
             color: saveReady ? saveBg : "#cfd8cf"
-            border.color: saveReady ? "#6fd694" : "#aab5aa"
+            border.color: saveReady ? "#9f1117" : "#aab5aa"
             border.width: 1
             anchors.horizontalCenter: parent.horizontalCenter
 
