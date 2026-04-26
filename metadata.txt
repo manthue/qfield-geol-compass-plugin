@@ -1,7 +1,7 @@
 [general]
 name=Geo Compass
-version=0.3.64
-description=Restores sensor behavior with FeatureModel-based saving and detailed save logging.
+version=0.3.65
+description=Stops overlay before FeatureModel save and logs post-create cleanup.
 author=OpenAI Codex
 homepage=https://github.com/manthue/qfield-geol-compass-plugin
 icon=

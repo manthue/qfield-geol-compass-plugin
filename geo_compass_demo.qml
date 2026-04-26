@@ -37,7 +37,7 @@ Item {
   property bool hasRotationReading: false
   property bool hasAccelReading: false
   property string lastDebugLogPath: ""
-  readonly property string pluginVersionLabel: "v0.3.64"
+  readonly property string pluginVersionLabel: "v0.3.65"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""
@@ -1783,6 +1783,10 @@ Item {
       return;
     }
 
+    appendDebugLog("save pre-create overlay stop begin visible=" + compassVisible);
+    compassVisible = false;
+    appendDebugLog("save pre-create overlay stop ok visible=" + compassVisible);
+
     appendDebugLog("save createBlankFeature begin layer=" + layerLabel);
     let feature = FeatureUtils.createBlankFeature(layerFieldsValue(targetLayer), geometry);
     appendDebugLog("save createBlankFeature ok layer=" + layerLabel);
@@ -1852,6 +1856,9 @@ Item {
       return;
     }
     appendDebugLog("save featureModel create ok layer=" + layerLabel);
+    appendDebugLog("save featureModel reset after create begin layer=" + layerLabel);
+    measurementFeatureModel.reset();
+    appendDebugLog("save featureModel reset after create ok layer=" + layerLabel);
 
     lastSavedLatitude = latitude;
     lastSavedLongitude = longitude;
@@ -1861,8 +1868,6 @@ Item {
         + " frozen=" + measurementFrozen
         + " visible=" + compassVisible
     );
-    compassVisible = false;
-    appendDebugLog("save overlay stopped visible=" + compassVisible);
     clearFrozenMeasurement();
     appendDebugLog(
       "save clear frozen ok frozen=" + measurementFrozen
@@ -1870,9 +1875,7 @@ Item {
         + " visible=" + compassVisible
     );
     appendDebugLog("save succeeded layer=" + layerLabel);
-    appendDebugLog("save toast begin");
-    iface.mainWindow().displayToast("Done.");
-    appendDebugLog("save toast shown");
+    appendDebugLog("save success toast skipped");
   }
 
   function formattedWholeAngle(value) {
