@@ -38,11 +38,7 @@ Item {
   property int sensorLogTick: 0
   property bool sensorProbeLogged: false
   property string lastDebugLogPath: ""
-  readonly property real desktopFallbackHeadingDeg: 45
-  readonly property real desktopFallbackTiltDeg: 25
-  readonly property real desktopFallbackLatitudeDeg: 46.0037
-  readonly property real desktopFallbackLongitudeDeg: 8.9511
-  readonly property string pluginVersionLabel: "v0.3.58"
+  readonly property string pluginVersionLabel: "v0.3.59"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""
@@ -182,18 +178,12 @@ Item {
     }
   }
 
-  function testFallbackEnabled() {
-    return true;
-  }
-
   function effectiveLatitude(info) {
-    const value = positionLatitude(info);
-    return isNaN(value) && testFallbackEnabled() ? desktopFallbackLatitudeDeg : value;
+    return positionLatitude(info);
   }
 
   function effectiveLongitude(info) {
-    const value = positionLongitude(info);
-    return isNaN(value) && testFallbackEnabled() ? desktopFallbackLongitudeDeg : value;
+    return positionLongitude(info);
   }
 
   function currentPositionReady(info) {
@@ -205,7 +195,7 @@ Item {
       return "GNSS";
     }
 
-    return testFallbackEnabled() ? "test position" : "none";
+    return "none";
   }
 
   function currentElevationValue(info) {
@@ -608,14 +598,6 @@ Item {
       };
     }
 
-    if (testFallbackEnabled()) {
-      return {
-        heading: desktopFallbackHeadingDeg,
-        tilt: desktopFallbackTiltDeg,
-        method: "test fallback"
-      };
-    }
-
     return null;
   }
 
@@ -635,14 +617,6 @@ Item {
         heading: gravity.trendDeg,
         tilt: gravity.plungeDeg,
         method: "gravity + compass"
-      };
-    }
-
-    if (testFallbackEnabled()) {
-      return {
-        heading: desktopFallbackHeadingDeg,
-        tilt: desktopFallbackTiltDeg,
-        method: "test fallback"
       };
     }
 
@@ -678,7 +652,7 @@ Item {
       return "qfield orientation";
     }
 
-    return testFallbackEnabled() ? "test fallback" : "none";
+    return "none";
   }
 
   function tiltSensorLabel() {
@@ -690,7 +664,7 @@ Item {
       return "accelerometer gravity";
     }
 
-    return testFallbackEnabled() ? "test fallback" : "none";
+    return "none";
   }
 
   function measurementMethodLabel() {
@@ -753,7 +727,7 @@ Item {
       ? "Lay the back of the phone flush on the plane."
       : "Align the phone top edge with the lineation.";
 
-    return "Phone-first sensors: QField IMU only, with 045/25 test fallback when orientation is unavailable. " + modeGuidance;
+    return "Phone-first sensors: QField IMU only; readings stay unavailable when sensor values are unavailable. " + modeGuidance;
   }
 
   function formatSensorValue(valid, value) {
@@ -878,10 +852,6 @@ Item {
 
     if (method === "gravity + compass") {
       return "qt_accel_compass";
-    }
-
-    if (method === "test fallback") {
-      return "test_fallback";
     }
 
     return "qt_internal";
@@ -1461,7 +1431,6 @@ Item {
         + " imuRoll=" + debugValue(rotationYDeg)
         + " imuHeading=" + debugValue(rotationZDeg)
         + " platform=" + platformName()
-        + " testFallbackEnabled=" + testFallbackEnabled()
         + " lat=" + debugValue(positionLatitude(positionInfo))
         + " lon=" + debugValue(positionLongitude(positionInfo))
         + " effectiveLat=" + debugValue(effectiveLatitude(positionInfo))
