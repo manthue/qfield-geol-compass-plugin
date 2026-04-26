@@ -42,7 +42,7 @@ Item {
   readonly property real desktopFallbackTiltDeg: 25
   readonly property real desktopFallbackLatitudeDeg: 46.0037
   readonly property real desktopFallbackLongitudeDeg: 8.9511
-  readonly property string pluginVersionLabel: "v0.3.57"
+  readonly property string pluginVersionLabel: "v0.3.58"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""
@@ -1934,8 +1934,10 @@ Item {
 
     lastSavedLatitude = latitude;
     lastSavedLongitude = longitude;
+    appendDebugLog("save persisted layer=" + layerLabel + " stopping overlay");
+    compassVisible = false;
     clearFrozenMeasurement();
-    appendDebugLog("save succeeded layer=" + layerLabel);
+    appendDebugLog("save succeeded layer=" + layerLabel + " overlayStopped=true");
     iface.mainWindow().displayToast("Done.");
   }
 
@@ -2039,7 +2041,7 @@ Item {
       root.updatePositioningFallbacks();
       root.updateRotationMapping();
       root.sensorLogTick += 1;
-      if (root.sensorLogTick % 10 === 0) {
+      if (root.platformName() !== "android" && root.sensorLogTick % 10 === 0) {
         root.logSensorSnapshot("timer snapshot");
       }
     }
