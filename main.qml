@@ -37,7 +37,7 @@ Item {
   property bool hasRotationReading: false
   property bool hasAccelReading: false
   property string lastDebugLogPath: ""
-  readonly property string pluginVersionLabel: "v0.3.61"
+  readonly property string pluginVersionLabel: "v0.3.62"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""
@@ -1612,6 +1612,7 @@ Item {
 
   function persistFeatureToLayer(layer, feature) {
     if (!layer || !feature) {
+      appendDebugLog("persist abort missing layer or feature");
       return {
         ok: false,
         message: "Missing layer or feature while saving the measurement."
@@ -1619,27 +1620,43 @@ Item {
     }
 
     const wasEditable = Boolean(callMember(layer, "isEditable"));
+    appendDebugLog(
+      "persist begin layer=" + targetLayerLabel(layer)
+        + " wasEditable=" + wasEditable
+    );
     if (!wasEditable && !callMember(layer, "startEditing")) {
+      appendDebugLog("persist failed startEditing layer=" + targetLayerLabel(layer));
       return {
         ok: false,
         message: "Failed to start editing on layer " + targetLayerLabel(layer)
       };
     }
+    appendDebugLog("persist editing ready layer=" + targetLayerLabel(layer));
 
+    appendDebugLog("persist addFeature begin layer=" + targetLayerLabel(layer));
     if (!LayerUtils.addFeature(layer, feature)) {
+      appendDebugLog("persist addFeature failed layer=" + targetLayerLabel(layer));
       if (!wasEditable) {
         callMember(layer, "rollBack");
+        appendDebugLog("persist rollBack after addFeature failure layer=" + targetLayerLabel(layer));
       }
       return {
         ok: false,
         message: "Failed to add the measurement feature to layer " + targetLayerLabel(layer)
       };
     }
+    appendDebugLog("persist addFeature ok layer=" + targetLayerLabel(layer));
 
+    appendDebugLog(
+      "persist commit begin layer=" + targetLayerLabel(layer)
+        + " stopEditing=" + (!wasEditable)
+    );
     if (!callMember(layer, "commitChanges", !wasEditable)) {
       const commitErrorsText = layerCommitErrorsText(layer);
+      appendDebugLog("persist commit failed layer=" + targetLayerLabel(layer) + " errors=" + commitErrorsText);
       if (!wasEditable) {
         callMember(layer, "rollBack");
+        appendDebugLog("persist rollBack after commit failure layer=" + targetLayerLabel(layer));
       }
       return {
         ok: false,
@@ -1648,6 +1665,7 @@ Item {
           : "Failed to commit the measurement to layer " + targetLayerLabel(layer)
       };
     }
+    appendDebugLog("persist commit ok layer=" + targetLayerLabel(layer));
 
     return {
       ok: true,
@@ -1765,8 +1783,11 @@ Item {
       return;
     }
 
+    appendDebugLog("save createBlankFeature begin layer=" + layerLabel);
     let feature = FeatureUtils.createBlankFeature(layerFieldsValue(targetLayer), geometry);
+    appendDebugLog("save createBlankFeature ok layer=" + layerLabel);
 
+    appendDebugLog("save set attributes begin layer=" + layerLabel);
     setAttributeIfPresent(feature, targetLayer, "mode", measurementKind);
 
     if (measurementKind === "linear") {
@@ -1797,17 +1818,31 @@ Item {
       setAttributeIfPresent(feature, targetLayer, "elevation", elevation);
       setAttributeIfPresent(feature, targetLayer, "altitude", elevation);
     }
+    appendDebugLog("save set attributes ok layer=" + layerLabel + " sensor=" + currentSensorTag());
 
+    appendDebugLog("save persist begin layer=" + layerLabel);
     const persisted = persistFeatureToLayer(targetLayer, feature);
     if (!persisted.ok) {
       appendDebugLog("save failed persist message=" + persisted.message);
       iface.mainWindow().displayToast(persisted.message);
       return;
     }
+    appendDebugLog("save persist ok layer=" + layerLabel);
 
     lastSavedLatitude = latitude;
     lastSavedLongitude = longitude;
+    appendDebugLog(
+      "save post-persist state lat=" + debugValue(lastSavedLatitude)
+        + " lon=" + debugValue(lastSavedLongitude)
+        + " frozen=" + measurementFrozen
+        + " visible=" + compassVisible
+    );
     clearFrozenMeasurement();
+    appendDebugLog(
+      "save clear frozen ok frozen=" + measurementFrozen
+        + " saveReady=" + saveReady
+        + " visible=" + compassVisible
+    );
     appendDebugLog("save succeeded layer=" + layerLabel);
     iface.mainWindow().displayToast("Done.");
   }
