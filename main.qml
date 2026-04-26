@@ -36,12 +36,13 @@ Item {
   property bool hasRotationReading: false
   property bool hasAccelReading: false
   property int sensorLogTick: 0
+  property bool sensorProbeLogged: false
   property string lastDebugLogPath: ""
   readonly property real desktopFallbackHeadingDeg: 45
   readonly property real desktopFallbackTiltDeg: 25
   readonly property real desktopFallbackLatitudeDeg: 46.0037
   readonly property real desktopFallbackLongitudeDeg: 8.9511
-  readonly property string pluginVersionLabel: "v0.3.55"
+  readonly property string pluginVersionLabel: "v0.3.56"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""
@@ -657,7 +658,7 @@ Item {
 
   function currentHeading() {
     const orientation = currentMeasurementOrientation();
-    return orientation ? orientation.heading : NaN;
+    return orientation ? orientation.heading : currentFallbackHeading();
   }
 
   function currentTiltDown() {
@@ -1388,6 +1389,67 @@ Item {
     return false;
   }
 
+  function candidatePropertyReport(target, label) {
+    const names = [
+      "sourceName",
+      "isValid",
+      "orientation",
+      "orientationValid",
+      "direction",
+      "directionValid",
+      "imuCorrection",
+      "imuHeading",
+      "imuHeadingValid",
+      "imuPitch",
+      "imuPitchValid",
+      "imuRoll",
+      "imuRollValid",
+      "imuSteering",
+      "imuSteeringValid",
+      "magneticVariation",
+      "speed",
+      "speedValid",
+      "latitude",
+      "latitudeValid",
+      "longitude",
+      "longitudeValid",
+      "elevation",
+      "elevationValid"
+    ];
+    let parts = [label];
+    for (let i = 0; i < names.length; ++i) {
+      const name = names[i];
+      parts.push(name + "=" + debugValue(memberValue(target, name)));
+    }
+    return parts.join(" ");
+  }
+
+  function logMobileSensorProbe(reason) {
+    if (sensorProbeLogged || platformName() !== "android") {
+      return;
+    }
+
+    sensorProbeLogged = true;
+    appendDebugLog("sensor probe reason=" + reason);
+
+    const info = currentPositionInfo();
+    appendDebugLog(candidatePropertyReport(info, "positionInformation"));
+
+    try {
+      const positioning = iface.positioning();
+      appendDebugLog(candidatePropertyReport(positioning, "iface.positioning"));
+    } catch (error) {
+      appendDebugLog("iface.positioning probe error=" + error);
+    }
+
+    try {
+      const source = iface.findItemByObjectName("positionSource");
+      appendDebugLog(candidatePropertyReport(source, "positionSource item"));
+    } catch (error) {
+      appendDebugLog("positionSource probe error=" + error);
+    }
+  }
+
   function logSensorSnapshot(reason) {
     appendDebugLog(
       reason
@@ -1407,6 +1469,7 @@ Item {
         + " effectiveLon=" + debugValue(effectiveLongitude(positionInfo))
         + " positionSource=" + positionSourceLabel(positionInfo)
     );
+    logMobileSensorProbe(reason);
   }
 
   function projectCrsAuthId() {
