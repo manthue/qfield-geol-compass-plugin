@@ -37,7 +37,9 @@ Item {
   property bool hasAccelReading: false
   property int sensorLogTick: 0
   property string lastDebugLogPath: ""
-  readonly property string pluginVersionLabel: "v0.3.51"
+  readonly property real desktopFallbackHeadingDeg: 45
+  readonly property real desktopFallbackTiltDeg: 25
+  readonly property string pluginVersionLabel: "v0.3.52"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""
@@ -567,7 +569,11 @@ Item {
       };
     }
 
-    return null;
+    return {
+      heading: desktopFallbackHeadingDeg,
+      tilt: desktopFallbackTiltDeg,
+      method: "desktop test fallback"
+    };
   }
 
   function currentLinearOrientation() {
@@ -589,7 +595,11 @@ Item {
       };
     }
 
-    return null;
+    return {
+      heading: desktopFallbackHeadingDeg,
+      tilt: desktopFallbackTiltDeg,
+      method: "desktop test fallback"
+    };
   }
 
   function currentMeasurementOrientation() {
@@ -621,7 +631,7 @@ Item {
       return "qfield orientation";
     }
 
-    return "none";
+    return "desktop test fallback";
   }
 
   function tiltSensorLabel() {
@@ -633,7 +643,7 @@ Item {
       return "accelerometer gravity";
     }
 
-    return "none";
+    return "desktop test fallback";
   }
 
   function measurementMethodLabel() {
@@ -696,7 +706,7 @@ Item {
       ? "Lay the back of the phone flush on the plane."
       : "Align the phone top edge with the lineation.";
 
-    return "Phone-first sensors: QField IMU only, with direct QtSensors disabled for Android startup stability. " + modeGuidance;
+    return "Phone-first sensors: QField IMU only, with 045/25 desktop test fallback when no sensor values are available. " + modeGuidance;
   }
 
   function formatSensorValue(valid, value) {
@@ -821,6 +831,10 @@ Item {
 
     if (method === "gravity + compass") {
       return "qt_accel_compass";
+    }
+
+    if (method === "desktop test fallback") {
+      return "desktop_test_fallback";
     }
 
     return "qt_internal";
