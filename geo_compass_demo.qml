@@ -39,7 +39,9 @@ Item {
   property string lastDebugLogPath: ""
   readonly property real desktopFallbackHeadingDeg: 45
   readonly property real desktopFallbackTiltDeg: 25
-  readonly property string pluginVersionLabel: "v0.3.52"
+  readonly property real desktopFallbackLatitudeDeg: 46.0037
+  readonly property real desktopFallbackLongitudeDeg: 8.9511
+  readonly property string pluginVersionLabel: "v0.3.53"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""
@@ -76,9 +78,7 @@ Item {
   readonly property real displayHeading: measurementFrozen ? frozenHeading : liveHeading
   readonly property real displayTilt: measurementFrozen ? frozenTilt : liveTilt
   readonly property bool frozenPositionReady: !isNaN(frozenLatitude) && !isNaN(frozenLongitude)
-  readonly property bool livePositionReady: positionInfo
-                                          && !isNaN(positionLatitude(positionInfo))
-                                          && !isNaN(positionLongitude(positionInfo))
+  readonly property bool livePositionReady: currentPositionReady(positionInfo)
   readonly property bool saveReady: saveButtonActive
 
   onActiveModeChanged: requestDialPaints()
@@ -167,6 +167,28 @@ Item {
 
   function positionLongitude(info) {
     return positionNumericValue(info, "longitude", "longitudeValid");
+  }
+
+  function hasPositionFix(info) {
+    return !isNaN(positionLatitude(info)) && !isNaN(positionLongitude(info));
+  }
+
+  function effectiveLatitude(info) {
+    const value = positionLatitude(info);
+    return isNaN(value) ? desktopFallbackLatitudeDeg : value;
+  }
+
+  function effectiveLongitude(info) {
+    const value = positionLongitude(info);
+    return isNaN(value) ? desktopFallbackLongitudeDeg : value;
+  }
+
+  function currentPositionReady(info) {
+    return !isNaN(effectiveLatitude(info)) && !isNaN(effectiveLongitude(info));
+  }
+
+  function positionSourceLabel(info) {
+    return hasPositionFix(info) ? "GNSS" : "desktop test position";
   }
 
   function currentElevationValue(info) {
@@ -762,8 +784,8 @@ Item {
     const heading = liveHeading;
     const tilt = liveTilt;
     const info = currentPositionInfo();
-    const latitude = positionLatitude(info);
-    const longitude = positionLongitude(info);
+    const latitude = effectiveLatitude(info);
+    const longitude = effectiveLongitude(info);
     const hasUsablePosition = !isNaN(latitude) && !isNaN(longitude);
 
     if (isNaN(heading)) {
@@ -779,8 +801,8 @@ Item {
     }
 
     if (!hasUsablePosition) {
-      appendDebugLog("freeze failed missing GNSS");
-      iface.mainWindow().displayToast("No valid GNSS position available to freeze");
+      appendDebugLog("freeze failed missing position");
+      iface.mainWindow().displayToast("No valid position available to freeze");
       return;
     }
 
@@ -1354,6 +1376,9 @@ Item {
         + " imuHeading=" + debugValue(rotationZDeg)
         + " lat=" + debugValue(positionLatitude(positionInfo))
         + " lon=" + debugValue(positionLongitude(positionInfo))
+        + " effectiveLat=" + debugValue(effectiveLatitude(positionInfo))
+        + " effectiveLon=" + debugValue(effectiveLongitude(positionInfo))
+        + " positionSource=" + positionSourceLabel(positionInfo)
     );
   }
 
@@ -1586,8 +1611,8 @@ Item {
 
   function currentGeometry() {
     const info = currentPositionInfo();
-    const latitude = positionLatitude(info);
-    const longitude = positionLongitude(info);
+    const latitude = effectiveLatitude(info);
+    const longitude = effectiveLongitude(info);
 
     if (isNaN(latitude) || isNaN(longitude)) {
       return null;
@@ -1701,7 +1726,7 @@ Item {
       appendDebugLog("save rejected saveReady=false frozen=" + measurementFrozen);
       iface.mainWindow().displayToast(
         measurementFrozen
-          ? "This locked reading has no frozen GNSS position yet"
+          ? "This locked reading has no frozen position yet"
           : "Freeze a reading before saving it"
       );
       return;
@@ -1724,10 +1749,10 @@ Item {
     const info = currentPositionInfo();
     const latitude = measurementFrozen
       ? frozenLatitude
-      : positionLatitude(info);
+      : effectiveLatitude(info);
     const longitude = measurementFrozen
       ? frozenLongitude
-      : positionLongitude(info);
+      : effectiveLongitude(info);
     const elevation = measurementFrozen ? frozenElevation : currentElevationValue(info);
     const geometry = geometryFromCoordinates(longitude, latitude);
     const targetLayer = targetMeasurementLayer ? targetMeasurementLayer : layerByName(measurementLayerName);
@@ -1760,8 +1785,8 @@ Item {
       appendDebugLog("save failed invalid geometry");
       iface.mainWindow().displayToast(
         measurementFrozen
-          ? "No frozen GNSS position is available for this reading"
-          : "No valid GNSS position available"
+          ? "No frozen position is available for this reading"
+          : "No valid position available"
       );
       return;
     }
@@ -1860,12 +1885,12 @@ Item {
   }
 
   function coordinateLabel() {
-    const latitude = measurementFrozen ? frozenLatitude : positionLatitude(positionInfo);
-    const longitude = measurementFrozen ? frozenLongitude : positionLongitude(positionInfo);
+    const latitude = measurementFrozen ? frozenLatitude : effectiveLatitude(positionInfo);
+    const longitude = measurementFrozen ? frozenLongitude : effectiveLongitude(positionInfo);
     const valid = measurementFrozen ? frozenPositionReady : livePositionReady;
 
     if (!valid) {
-      return "Waiting for GNSS";
+      return "Waiting for position";
     }
 
     return formatLatitude(latitude) + ", " + formatLongitude(longitude);
@@ -1885,7 +1910,7 @@ Item {
     }
 
     if (measurementFrozen) {
-      return "Need GNSS";
+      return "Need position";
     }
 
     return "Freeze first";
@@ -1903,7 +1928,7 @@ Item {
       return parts.join(" | ");
     }
 
-    parts.push(livePositionReady ? "GNSS ready" : "GNSS unavailable");
+    parts.push(livePositionReady ? positionSourceLabel(positionInfo) + " ready" : "Position unavailable");
     parts.push(isNaN(liveHeading) ? "Heading unavailable" : "Heading ready (" + headingSensorLabel() + ")");
     parts.push(isNaN(liveTilt) ? "Tilt unavailable" : "Tilt ready (" + tiltSensorLabel() + ")");
     parts.push("Live");
