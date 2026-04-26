@@ -41,7 +41,7 @@ Item {
   readonly property real desktopFallbackTiltDeg: 25
   readonly property real desktopFallbackLatitudeDeg: 46.0037
   readonly property real desktopFallbackLongitudeDeg: 8.9511
-  readonly property string pluginVersionLabel: "v0.3.53"
+  readonly property string pluginVersionLabel: "v0.3.54"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""
@@ -173,14 +173,27 @@ Item {
     return !isNaN(positionLatitude(info)) && !isNaN(positionLongitude(info));
   }
 
+  function platformName() {
+    try {
+      return String(Qt.platform.os);
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function desktopTestFallbackEnabled() {
+    const os = platformName();
+    return os !== "android" && os !== "ios" && os !== "";
+  }
+
   function effectiveLatitude(info) {
     const value = positionLatitude(info);
-    return isNaN(value) ? desktopFallbackLatitudeDeg : value;
+    return isNaN(value) && desktopTestFallbackEnabled() ? desktopFallbackLatitudeDeg : value;
   }
 
   function effectiveLongitude(info) {
     const value = positionLongitude(info);
-    return isNaN(value) ? desktopFallbackLongitudeDeg : value;
+    return isNaN(value) && desktopTestFallbackEnabled() ? desktopFallbackLongitudeDeg : value;
   }
 
   function currentPositionReady(info) {
@@ -188,7 +201,11 @@ Item {
   }
 
   function positionSourceLabel(info) {
-    return hasPositionFix(info) ? "GNSS" : "desktop test position";
+    if (hasPositionFix(info)) {
+      return "GNSS";
+    }
+
+    return desktopTestFallbackEnabled() ? "desktop test position" : "none";
   }
 
   function currentElevationValue(info) {
@@ -591,11 +608,15 @@ Item {
       };
     }
 
-    return {
-      heading: desktopFallbackHeadingDeg,
-      tilt: desktopFallbackTiltDeg,
-      method: "desktop test fallback"
-    };
+    if (desktopTestFallbackEnabled()) {
+      return {
+        heading: desktopFallbackHeadingDeg,
+        tilt: desktopFallbackTiltDeg,
+        method: "desktop test fallback"
+      };
+    }
+
+    return null;
   }
 
   function currentLinearOrientation() {
@@ -617,11 +638,15 @@ Item {
       };
     }
 
-    return {
-      heading: desktopFallbackHeadingDeg,
-      tilt: desktopFallbackTiltDeg,
-      method: "desktop test fallback"
-    };
+    if (desktopTestFallbackEnabled()) {
+      return {
+        heading: desktopFallbackHeadingDeg,
+        tilt: desktopFallbackTiltDeg,
+        method: "desktop test fallback"
+      };
+    }
+
+    return null;
   }
 
   function currentMeasurementOrientation() {
@@ -653,7 +678,7 @@ Item {
       return "qfield orientation";
     }
 
-    return "desktop test fallback";
+    return desktopTestFallbackEnabled() ? "desktop test fallback" : "none";
   }
 
   function tiltSensorLabel() {
@@ -665,7 +690,7 @@ Item {
       return "accelerometer gravity";
     }
 
-    return "desktop test fallback";
+    return desktopTestFallbackEnabled() ? "desktop test fallback" : "none";
   }
 
   function measurementMethodLabel() {
@@ -728,7 +753,7 @@ Item {
       ? "Lay the back of the phone flush on the plane."
       : "Align the phone top edge with the lineation.";
 
-    return "Phone-first sensors: QField IMU only, with 045/25 desktop test fallback when no sensor values are available. " + modeGuidance;
+    return "Phone-first sensors: QField IMU only, with 045/25 desktop test fallback on non-mobile platforms. " + modeGuidance;
   }
 
   function formatSensorValue(valid, value) {
@@ -1374,6 +1399,8 @@ Item {
         + " imuPitch=" + debugValue(rotationXDeg)
         + " imuRoll=" + debugValue(rotationYDeg)
         + " imuHeading=" + debugValue(rotationZDeg)
+        + " platform=" + platformName()
+        + " desktopFallbackEnabled=" + desktopTestFallbackEnabled()
         + " lat=" + debugValue(positionLatitude(positionInfo))
         + " lon=" + debugValue(positionLongitude(positionInfo))
         + " effectiveLat=" + debugValue(effectiveLatitude(positionInfo))
