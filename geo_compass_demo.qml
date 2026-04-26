@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtSensors
 import org.qfield
 import Theme
 
@@ -35,11 +36,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  property int sensorLogTick: 0
-  property bool sensorProbeLogged: false
-  property string lastDebugLogPath: ""
-  readonly property string pluginVersionLabel: "v0.3.59"
-  readonly property string debugLogFileName: "geo_compass_debug_log.txt"
+  readonly property string pluginVersionLabel: "v0.3.60"
 
   property string localityText: ""
   property string typeText: ""
@@ -75,7 +72,9 @@ Item {
   readonly property real displayHeading: measurementFrozen ? frozenHeading : liveHeading
   readonly property real displayTilt: measurementFrozen ? frozenTilt : liveTilt
   readonly property bool frozenPositionReady: !isNaN(frozenLatitude) && !isNaN(frozenLongitude)
-  readonly property bool livePositionReady: currentPositionReady(positionInfo)
+  readonly property bool livePositionReady: positionInfo
+                                          && !isNaN(positionLatitude(positionInfo))
+                                          && !isNaN(positionLongitude(positionInfo))
   readonly property bool saveReady: saveButtonActive
 
   onActiveModeChanged: requestDialPaints()
@@ -164,38 +163,6 @@ Item {
 
   function positionLongitude(info) {
     return positionNumericValue(info, "longitude", "longitudeValid");
-  }
-
-  function hasPositionFix(info) {
-    return !isNaN(positionLatitude(info)) && !isNaN(positionLongitude(info));
-  }
-
-  function platformName() {
-    try {
-      return String(Qt.platform.os);
-    } catch (error) {
-      return "";
-    }
-  }
-
-  function effectiveLatitude(info) {
-    return positionLatitude(info);
-  }
-
-  function effectiveLongitude(info) {
-    return positionLongitude(info);
-  }
-
-  function currentPositionReady(info) {
-    return !isNaN(effectiveLatitude(info)) && !isNaN(effectiveLongitude(info));
-  }
-
-  function positionSourceLabel(info) {
-    if (hasPositionFix(info)) {
-      return "GNSS";
-    }
-
-    return "none";
   }
 
   function currentElevationValue(info) {
@@ -631,7 +598,7 @@ Item {
 
   function currentHeading() {
     const orientation = currentMeasurementOrientation();
-    return orientation ? orientation.heading : currentFallbackHeading();
+    return orientation ? orientation.heading : NaN;
   }
 
   function currentTiltDown() {
@@ -640,10 +607,6 @@ Item {
   }
 
   function headingSensorLabel() {
-    if (!isNaN(rotationZDeg)) {
-      return "QField IMU heading";
-    }
-
     if (!isNaN(currentCompassHeading())) {
       return isNaN(magneticVariationDeg) ? "compass" : "compass + declination";
     }
@@ -727,7 +690,7 @@ Item {
       ? "Lay the back of the phone flush on the plane."
       : "Align the phone top edge with the lineation.";
 
-    return "Phone-first sensors: QField IMU only; readings stay unavailable when sensor values are unavailable. " + modeGuidance;
+    return "Phone-first sensors: QField IMU when available, accelerometer gravity fallback. " + modeGuidance;
   }
 
   function formatSensorValue(valid, value) {
@@ -755,8 +718,8 @@ Item {
   }
 
   function sensorDebugLabel() {
-    return "QField heading "
-      + formatAngleValue(rotationZDeg)
+    return "Compass "
+      + formatAngleValue(currentCompassHeading())
       + " | IMU pitch "
       + formatAngleValue(rotationXDeg)
       + " | IMU roll "
@@ -768,7 +731,7 @@ Item {
   }
 
   function sensorDebugMultilineLabel() {
-    return "QField heading: " + formatAngleValue(rotationZDeg)
+    return "Compass: " + formatAngleValue(currentCompassHeading())
       + "    Method: " + measurementMethodLabel()
       + "\nIMU pitch/roll/heading: " + formatAngleValue(rotationXDeg)
       + " / " + formatAngleValue(rotationYDeg)
@@ -779,29 +742,25 @@ Item {
   }
 
   function freezeMeasurement() {
-    appendDebugLog("freeze requested");
     const heading = liveHeading;
     const tilt = liveTilt;
     const info = currentPositionInfo();
-    const latitude = effectiveLatitude(info);
-    const longitude = effectiveLongitude(info);
+    const latitude = positionLatitude(info);
+    const longitude = positionLongitude(info);
     const hasUsablePosition = !isNaN(latitude) && !isNaN(longitude);
 
     if (isNaN(heading)) {
-      appendDebugLog("freeze failed invalid heading");
       iface.mainWindow().displayToast("No valid heading available from the phone sensors");
       return;
     }
 
     if (isNaN(tilt)) {
-      appendDebugLog("freeze failed invalid tilt");
       iface.mainWindow().displayToast("No valid tilt value available from the phone sensors");
       return;
     }
 
     if (!hasUsablePosition) {
-      appendDebugLog("freeze failed missing position");
-      iface.mainWindow().displayToast("No valid position available to freeze");
+      iface.mainWindow().displayToast("No valid GNSS position available to freeze");
       return;
     }
 
@@ -813,13 +772,6 @@ Item {
     frozenElevation = currentElevationValue(info);
     saveButtonActive = true;
     measurementFrozen = true;
-    appendDebugLog(
-      "freeze succeeded mode=" + frozenMode
-        + " heading=" + debugValue(frozenHeading)
-        + " tilt=" + debugValue(frozenTilt)
-        + " lat=" + debugValue(frozenLatitude)
-        + " lon=" + debugValue(frozenLongitude)
-    );
     iface.mainWindow().displayToast(
       "Locked "
         + modeDisplayNameFor(frozenMode)
@@ -833,7 +785,6 @@ Item {
   }
 
   function clearFrozenMeasurement() {
-    appendDebugLog("clear frozen measurement");
     measurementFrozen = false;
     saveButtonActive = false;
     frozenMode = "";
@@ -1306,140 +1257,6 @@ Item {
     return FileUtils.absolutePath(projectPath);
   }
 
-  function debugLogPath() {
-    const projectDir = projectDirectoryPath();
-    if (projectDir.length === 0) {
-      return "";
-    }
-
-    return projectDir + "/" + debugLogFileName;
-  }
-
-  function debugValue(value) {
-    if (value === undefined) {
-      return "undefined";
-    }
-    if (value === null) {
-      return "null";
-    }
-    if (typeof value === "number") {
-      return isNaN(value) ? "NaN" : value.toFixed(3);
-    }
-    return String(value);
-  }
-
-  function appendDebugLog(message) {
-    try {
-      const path = debugLogPath();
-      if (path.length === 0) {
-        return false;
-      }
-
-      let existing = "";
-      if (FileUtils.fileExists(path)) {
-        existing = FileUtils.readFileContent(path);
-        if (existing.length > 40000) {
-          existing = existing.substring(existing.length - 30000);
-        }
-      }
-
-      const line = new Date().toISOString()
-        + " | " + pluginVersionLabel
-        + " | " + message
-        + "\n";
-
-      if (FileUtils.writeFileContent(path, existing + line)) {
-        lastDebugLogPath = path;
-        return true;
-      }
-    } catch (error) {
-    }
-
-    return false;
-  }
-
-  function candidatePropertyReport(target, label) {
-    const names = [
-      "sourceName",
-      "isValid",
-      "orientation",
-      "orientationValid",
-      "direction",
-      "directionValid",
-      "imuCorrection",
-      "imuHeading",
-      "imuHeadingValid",
-      "imuPitch",
-      "imuPitchValid",
-      "imuRoll",
-      "imuRollValid",
-      "imuSteering",
-      "imuSteeringValid",
-      "magneticVariation",
-      "speed",
-      "speedValid",
-      "latitude",
-      "latitudeValid",
-      "longitude",
-      "longitudeValid",
-      "elevation",
-      "elevationValid"
-    ];
-    let parts = [label];
-    for (let i = 0; i < names.length; ++i) {
-      const name = names[i];
-      parts.push(name + "=" + debugValue(memberValue(target, name)));
-    }
-    return parts.join(" ");
-  }
-
-  function logMobileSensorProbe(reason) {
-    if (sensorProbeLogged || platformName() !== "android") {
-      return;
-    }
-
-    sensorProbeLogged = true;
-    appendDebugLog("sensor probe reason=" + reason);
-
-    const info = currentPositionInfo();
-    appendDebugLog(candidatePropertyReport(info, "positionInformation"));
-
-    try {
-      const positioning = iface.positioning();
-      appendDebugLog(candidatePropertyReport(positioning, "iface.positioning"));
-    } catch (error) {
-      appendDebugLog("iface.positioning probe error=" + error);
-    }
-
-    try {
-      const source = iface.findItemByObjectName("positionSource");
-      appendDebugLog(candidatePropertyReport(source, "positionSource item"));
-    } catch (error) {
-      appendDebugLog("positionSource probe error=" + error);
-    }
-  }
-
-  function logSensorSnapshot(reason) {
-    appendDebugLog(
-      reason
-        + " visible=" + debugValue(compassVisible)
-        + " method=" + measurementMethodLabel()
-        + " heading=" + debugValue(liveHeading)
-        + " tilt=" + debugValue(liveTilt)
-        + " qfieldOrientation=" + debugValue(qfieldOrientationDeg)
-        + " imuPitch=" + debugValue(rotationXDeg)
-        + " imuRoll=" + debugValue(rotationYDeg)
-        + " imuHeading=" + debugValue(rotationZDeg)
-        + " platform=" + platformName()
-        + " lat=" + debugValue(positionLatitude(positionInfo))
-        + " lon=" + debugValue(positionLongitude(positionInfo))
-        + " effectiveLat=" + debugValue(effectiveLatitude(positionInfo))
-        + " effectiveLon=" + debugValue(effectiveLongitude(positionInfo))
-        + " positionSource=" + positionSourceLabel(positionInfo)
-    );
-    logMobileSensorProbe(reason);
-  }
-
   function projectCrsAuthId() {
     let authId = "EPSG:4326";
 
@@ -1594,23 +1411,16 @@ Item {
   }
 
   function showAlert(message) {
-    appendDebugLog("alert message=" + message);
     noticeDialog.text = message;
     noticeDialog.open();
   }
 
   function openCompassFromMap() {
-    appendDebugLog("open requested projectPath=" + projectFilePath() + " projectDir=" + projectDirectoryPath());
     const result = findCompatibleMeasurementLayer();
-    appendDebugLog(
-      "layer lookup layerFound=" + Boolean(result.layer)
-        + " message=" + result.message
-    );
 
     if (!result.layer) {
       const creation = createPersistentMeasurementLayer();
       if (!creation.layer) {
-        appendDebugLog("layer creation failed message=" + creation.message);
         showAlert(result.message + "\n\n" + creation.message);
         return;
       }
@@ -1623,12 +1433,6 @@ Item {
       compassVisible = true;
       seedTypeForMode();
       requestDialPaints();
-      appendDebugLog(
-        "compass opened with createdOrLoadedLayer="
-          + layerNameValue(creation.layer)
-          + " created=" + Boolean(creation.created)
-      );
-      logSensorSnapshot("open snapshot");
       iface.mainWindow().displayToast(
         creation.created
           ? "Persistent measurement layer created and added to project"
@@ -1645,12 +1449,9 @@ Item {
     compassVisible = true;
     seedTypeForMode();
     requestDialPaints();
-    appendDebugLog("compass opened with existingLayer=" + layerNameValue(result.layer));
-    logSensorSnapshot("open snapshot");
   }
 
   function closeCompass() {
-    appendDebugLog("close requested");
     compassVisible = false;
     refreshMapForSavedMeasurement();
   }
@@ -1669,8 +1470,8 @@ Item {
 
   function currentGeometry() {
     const info = currentPositionInfo();
-    const latitude = effectiveLatitude(info);
-    const longitude = effectiveLongitude(info);
+    const latitude = positionLatitude(info);
+    const longitude = positionLongitude(info);
 
     if (isNaN(latitude) || isNaN(longitude)) {
       return null;
@@ -1781,21 +1582,18 @@ Item {
 
   function saveMeasurement(kind) {
     if (!saveReady) {
-      appendDebugLog("save rejected saveReady=false frozen=" + measurementFrozen);
       iface.mainWindow().displayToast(
         measurementFrozen
-          ? "This locked reading has no frozen position yet"
+          ? "This locked reading has no frozen GNSS position yet"
           : "Freeze a reading before saving it"
       );
       return;
     }
 
     iface.mainWindow().displayToast("Saving measurement...");
-    appendDebugLog("save requested kind=" + kind);
     try {
       saveMeasurementChecked(kind);
     } catch (error) {
-      appendDebugLog("save exception error=" + error);
       iface.mainWindow().displayToast("Save error: " + error);
     }
   }
@@ -1807,56 +1605,41 @@ Item {
     const info = currentPositionInfo();
     const latitude = measurementFrozen
       ? frozenLatitude
-      : effectiveLatitude(info);
+      : positionLatitude(info);
     const longitude = measurementFrozen
       ? frozenLongitude
-      : effectiveLongitude(info);
+      : positionLongitude(info);
     const elevation = measurementFrozen ? frozenElevation : currentElevationValue(info);
     const geometry = geometryFromCoordinates(longitude, latitude);
     const targetLayer = targetMeasurementLayer ? targetMeasurementLayer : layerByName(measurementLayerName);
     const layerLabel = targetLayerLabel(targetLayer);
 
-    appendDebugLog(
-      "save checked kind=" + measurementKind
-        + " layer=" + layerLabel
-        + " heading=" + debugValue(heading)
-        + " tilt=" + debugValue(tilt)
-        + " lat=" + debugValue(latitude)
-        + " lon=" + debugValue(longitude)
-        + " elevation=" + debugValue(elevation)
-    );
-
     if (!targetLayer) {
-      appendDebugLog("save failed missing layer");
       iface.mainWindow().displayToast("Missing layer: " + measurementLayerName);
       return;
     }
 
     const compatibilityMessage = compatibleLayerMessage(targetLayer, missingRequiredFields(targetLayer));
     if (compatibilityMessage.length > 0) {
-      appendDebugLog("save failed incompatible layer message=" + compatibilityMessage);
       iface.mainWindow().displayToast(compatibilityMessage);
       return;
     }
 
     if (!geometry) {
-      appendDebugLog("save failed invalid geometry");
       iface.mainWindow().displayToast(
         measurementFrozen
-          ? "No frozen position is available for this reading"
-          : "No valid position available"
+          ? "No frozen GNSS position is available for this reading"
+          : "No valid GNSS position available"
       );
       return;
     }
 
     if (isNaN(heading)) {
-      appendDebugLog("save failed invalid heading");
       iface.mainWindow().displayToast("No valid heading available from the phone sensors");
       return;
     }
 
     if (isNaN(tilt)) {
-      appendDebugLog("save failed invalid tilt");
       iface.mainWindow().displayToast("No valid tilt value available from the phone sensors");
       return;
     }
@@ -1896,17 +1679,13 @@ Item {
 
     const persisted = persistFeatureToLayer(targetLayer, feature);
     if (!persisted.ok) {
-      appendDebugLog("save failed persist message=" + persisted.message);
       iface.mainWindow().displayToast(persisted.message);
       return;
     }
 
     lastSavedLatitude = latitude;
     lastSavedLongitude = longitude;
-    appendDebugLog("save persisted layer=" + layerLabel + " stopping overlay");
-    compassVisible = false;
     clearFrozenMeasurement();
-    appendDebugLog("save succeeded layer=" + layerLabel + " overlayStopped=true");
     iface.mainWindow().displayToast("Done.");
   }
 
@@ -1945,12 +1724,12 @@ Item {
   }
 
   function coordinateLabel() {
-    const latitude = measurementFrozen ? frozenLatitude : effectiveLatitude(positionInfo);
-    const longitude = measurementFrozen ? frozenLongitude : effectiveLongitude(positionInfo);
+    const latitude = measurementFrozen ? frozenLatitude : positionLatitude(positionInfo);
+    const longitude = measurementFrozen ? frozenLongitude : positionLongitude(positionInfo);
     const valid = measurementFrozen ? frozenPositionReady : livePositionReady;
 
     if (!valid) {
-      return "Waiting for position";
+      return "Waiting for GNSS";
     }
 
     return formatLatitude(latitude) + ", " + formatLongitude(longitude);
@@ -1970,7 +1749,7 @@ Item {
     }
 
     if (measurementFrozen) {
-      return "Need position";
+      return "Need GNSS";
     }
 
     return "Freeze first";
@@ -1988,7 +1767,7 @@ Item {
       return parts.join(" | ");
     }
 
-    parts.push(livePositionReady ? positionSourceLabel(positionInfo) + " ready" : "Position unavailable");
+    parts.push(livePositionReady ? "GNSS ready" : "GNSS unavailable");
     parts.push(isNaN(liveHeading) ? "Heading unavailable" : "Heading ready (" + headingSensorLabel() + ")");
     parts.push(isNaN(liveTilt) ? "Tilt unavailable" : "Tilt ready (" + tiltSensorLabel() + ")");
     parts.push("Live");
@@ -2000,6 +1779,44 @@ Item {
     return measurementFrozen ? "Unlock reading" : "Freeze current reading";
   }
 
+  Compass {
+    id: compassSensor
+    active: root.compassVisible
+
+    onReadingChanged: {
+      if (!reading) {
+        return;
+      }
+
+      root.hasCompassReading = true;
+      root.compassCalibrationLevel = reading.calibrationLevel;
+      root.compassHeadingDeg = root.smoothAngle(
+        root.compassHeadingDeg,
+        root.normalizeAzimuth(reading.azimuth),
+        0.25
+      );
+      root.updateRotationMapping();
+    }
+  }
+
+  Accelerometer {
+    id: accelerometerSensor
+    active: root.compassVisible
+    accelerationMode: Accelerometer.Gravity
+
+    onReadingChanged: {
+      if (!reading) {
+        return;
+      }
+
+      root.hasAccelReading = true;
+      root.accelX = root.smoothScalar(root.accelX, reading.x, 0.25);
+      root.accelY = root.smoothScalar(root.accelY, reading.y, 0.25);
+      root.accelZ = root.smoothScalar(root.accelZ, reading.z, 0.25);
+      root.updateRotationMapping();
+    }
+  }
+
   Timer {
     interval: 200
     repeat: true
@@ -2009,10 +1826,6 @@ Item {
     onTriggered: {
       root.updatePositioningFallbacks();
       root.updateRotationMapping();
-      root.sensorLogTick += 1;
-      if (root.platformName() !== "android" && root.sensorLogTick % 10 === 0) {
-        root.logSensorSnapshot("timer snapshot");
-      }
     }
   }
 
@@ -2049,8 +1862,7 @@ Item {
     seedTypeForMode();
     iface.addItemToPluginsToolbar(compassLauncher);
     requestDialPaints();
-    appendDebugLog("plugin loaded projectPath=" + projectFilePath() + " projectDir=" + projectDirectoryPath());
-    iface.mainWindow().displayToast("Geo compass plugin ready; log: " + debugLogFileName);
+    iface.mainWindow().displayToast("Geo compass plugin ready");
   }
 
   Component.onDestruction: {
