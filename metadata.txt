@@ -1,7 +1,7 @@
 [general]
 name=Geo Compass
-version=0.3.60
-description=Rollback release restoring v0.3.49 Geo Compass behavior.
+version=0.3.61
+description=Restores v0.3.49 Geo Compass behavior with lightweight project-folder debug logging.
 author=OpenAI Codex
 homepage=https://github.com/manthue/qfield-geol-compass-plugin
 icon=
