@@ -41,7 +41,7 @@ Item {
   readonly property real desktopFallbackTiltDeg: 25
   readonly property real desktopFallbackLatitudeDeg: 46.0037
   readonly property real desktopFallbackLongitudeDeg: 8.9511
-  readonly property string pluginVersionLabel: "v0.3.54"
+  readonly property string pluginVersionLabel: "v0.3.55"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""

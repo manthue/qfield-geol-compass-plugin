@@ -1,6 +1,6 @@
 [general]
 name=Geo Compass
-version=0.3.54
+version=0.3.55
 description=Capture structural readings in QField using QField IMU, debug logging, and desktop-only test orientation/position fallbacks.
 author=OpenAI Codex
 homepage=https://github.com/manthue/qfield-geol-compass-plugin
