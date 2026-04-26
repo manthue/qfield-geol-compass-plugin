@@ -37,7 +37,7 @@ Item {
   property bool hasRotationReading: false
   property bool hasAccelReading: false
   property string lastDebugLogPath: ""
-  readonly property string pluginVersionLabel: "v0.3.63"
+  readonly property string pluginVersionLabel: "v0.3.64"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""
@@ -1820,19 +1820,43 @@ Item {
     }
     appendDebugLog("save set attributes ok layer=" + layerLabel + " sensor=" + currentSensorTag());
 
-    appendDebugLog("save persist begin layer=" + layerLabel);
-    const persisted = persistFeatureToLayer(targetLayer, feature);
-    if (!persisted.ok) {
-      appendDebugLog("save failed persist message=" + persisted.message);
-      iface.mainWindow().displayToast(persisted.message);
+    appendDebugLog("save featureModel reset begin layer=" + layerLabel);
+    measurementFeatureModel.reset();
+    measurementFeatureModel.currentLayer = targetLayer;
+    measurementFeatureModel.feature = feature;
+    appendDebugLog("save featureModel assigned layer=" + layerLabel);
+
+    appendDebugLog("save featureModel updateAttributes begin layer=" + layerLabel);
+    if (!measurementFeatureModel.updateAttributesFromFeature(feature)) {
+      appendDebugLog("save featureModel updateAttributes failed layer=" + layerLabel);
+      measurementFeatureModel.reset();
+      iface.mainWindow().displayToast("Failed to prepare attributes for layer " + layerLabel);
       return;
     }
-    appendDebugLog("save persist ok layer=" + layerLabel);
+    appendDebugLog("save featureModel updateAttributes ok layer=" + layerLabel);
+
+    appendDebugLog("save featureModel changeGeometry begin layer=" + layerLabel);
+    if (!measurementFeatureModel.changeGeometry(geometry)) {
+      appendDebugLog("save featureModel changeGeometry failed layer=" + layerLabel);
+      measurementFeatureModel.reset();
+      iface.mainWindow().displayToast("Failed to prepare geometry for layer " + layerLabel);
+      return;
+    }
+    appendDebugLog("save featureModel changeGeometry ok layer=" + layerLabel);
+
+    appendDebugLog("save featureModel create begin layer=" + layerLabel);
+    if (!measurementFeatureModel.create(true)) {
+      appendDebugLog("save featureModel create failed layer=" + layerLabel);
+      measurementFeatureModel.reset();
+      iface.mainWindow().displayToast("Failed to create " + measurementKind + " measurement in layer " + layerLabel);
+      return;
+    }
+    appendDebugLog("save featureModel create ok layer=" + layerLabel);
 
     lastSavedLatitude = latitude;
     lastSavedLongitude = longitude;
     appendDebugLog(
-      "save post-persist state lat=" + debugValue(lastSavedLatitude)
+      "save post-create state lat=" + debugValue(lastSavedLatitude)
         + " lon=" + debugValue(lastSavedLongitude)
         + " frozen=" + measurementFrozen
         + " visible=" + compassVisible
@@ -1976,6 +2000,19 @@ Item {
       root.accelY = root.smoothScalar(root.accelY, reading.y, 0.25);
       root.accelZ = root.smoothScalar(root.accelZ, reading.z, 0.25);
       root.updateRotationMapping();
+    }
+  }
+
+  FeatureModel {
+    id: measurementFeatureModel
+    project: qgisProject
+    modelMode: FeatureModel.SingleFeatureModel
+
+    onWarning: function(text) {
+      appendDebugLog("featureModel warning=" + text);
+      if (text && text.length > 0) {
+        iface.mainWindow().displayToast(text);
+      }
     }
   }
 
