@@ -37,7 +37,7 @@ Item {
   property bool hasRotationReading: false
   property bool hasAccelReading: false
   property string lastDebugLogPath: ""
-  readonly property string pluginVersionLabel: "v0.3.62"
+  readonly property string pluginVersionLabel: "v0.3.63"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
 
   property string localityText: ""
@@ -1837,6 +1837,8 @@ Item {
         + " frozen=" + measurementFrozen
         + " visible=" + compassVisible
     );
+    compassVisible = false;
+    appendDebugLog("save overlay stopped visible=" + compassVisible);
     clearFrozenMeasurement();
     appendDebugLog(
       "save clear frozen ok frozen=" + measurementFrozen
@@ -1844,7 +1846,9 @@ Item {
         + " visible=" + compassVisible
     );
     appendDebugLog("save succeeded layer=" + layerLabel);
+    appendDebugLog("save toast begin");
     iface.mainWindow().displayToast("Done.");
+    appendDebugLog("save toast shown");
   }
 
   function formattedWholeAngle(value) {

@@ -1,7 +1,7 @@
 [general]
 name=Geo Compass
-version=0.3.62
-description=Restores v0.3.49 Geo Compass behavior with detailed GPKG save-stage debug logging.
+version=0.3.63
+description=Restores v0.3.49 behavior with GPKG save logging and post-save overlay stop.
 author=OpenAI Codex
 homepage=https://github.com/manthue/qfield-geol-compass-plugin
 icon=
