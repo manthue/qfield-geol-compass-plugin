@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtSensors
 import org.qfield
 import Theme
 
@@ -36,7 +35,7 @@ Item {
   property bool hasCompassReading: false
   property bool hasRotationReading: false
   property bool hasAccelReading: false
-  readonly property string pluginVersionLabel: "v0.3.49"
+  readonly property string pluginVersionLabel: "v0.3.50"
 
   property string localityText: ""
   property string typeText: ""
@@ -607,6 +606,10 @@ Item {
   }
 
   function headingSensorLabel() {
+    if (!isNaN(rotationZDeg)) {
+      return "QField IMU heading";
+    }
+
     if (!isNaN(currentCompassHeading())) {
       return isNaN(magneticVariationDeg) ? "compass" : "compass + declination";
     }
@@ -690,7 +693,7 @@ Item {
       ? "Lay the back of the phone flush on the plane."
       : "Align the phone top edge with the lineation.";
 
-    return "Phone-first sensors: QField IMU when available, accelerometer gravity fallback. " + modeGuidance;
+    return "Phone-first sensors: QField IMU only, with direct QtSensors disabled for Android startup stability. " + modeGuidance;
   }
 
   function formatSensorValue(valid, value) {
@@ -718,8 +721,8 @@ Item {
   }
 
   function sensorDebugLabel() {
-    return "Compass "
-      + formatAngleValue(currentCompassHeading())
+    return "QField heading "
+      + formatAngleValue(rotationZDeg)
       + " | IMU pitch "
       + formatAngleValue(rotationXDeg)
       + " | IMU roll "
@@ -731,7 +734,7 @@ Item {
   }
 
   function sensorDebugMultilineLabel() {
-    return "Compass: " + formatAngleValue(currentCompassHeading())
+    return "QField heading: " + formatAngleValue(rotationZDeg)
       + "    Method: " + measurementMethodLabel()
       + "\nIMU pitch/roll/heading: " + formatAngleValue(rotationXDeg)
       + " / " + formatAngleValue(rotationYDeg)
@@ -1777,44 +1780,6 @@ Item {
 
   function freezeButtonLabel() {
     return measurementFrozen ? "Unlock reading" : "Freeze current reading";
-  }
-
-  Compass {
-    id: compassSensor
-    active: root.compassVisible
-
-    onReadingChanged: {
-      if (!reading) {
-        return;
-      }
-
-      root.hasCompassReading = true;
-      root.compassCalibrationLevel = reading.calibrationLevel;
-      root.compassHeadingDeg = root.smoothAngle(
-        root.compassHeadingDeg,
-        root.normalizeAzimuth(reading.azimuth),
-        0.25
-      );
-      root.updateRotationMapping();
-    }
-  }
-
-  Accelerometer {
-    id: accelerometerSensor
-    active: root.compassVisible
-    accelerationMode: Accelerometer.Gravity
-
-    onReadingChanged: {
-      if (!reading) {
-        return;
-      }
-
-      root.hasAccelReading = true;
-      root.accelX = root.smoothScalar(root.accelX, reading.x, 0.25);
-      root.accelY = root.smoothScalar(root.accelY, reading.y, 0.25);
-      root.accelZ = root.smoothScalar(root.accelZ, reading.z, 0.25);
-      root.updateRotationMapping();
-    }
   }
 
   Timer {
