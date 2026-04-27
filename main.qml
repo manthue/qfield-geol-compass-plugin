@@ -37,10 +37,10 @@ Item {
   property bool hasRotationReading: false
   property bool hasAccelReading: false
   property string lastDebugLogPath: ""
-  readonly property string pluginVersionLabel: "v0.3.67"
+  readonly property string pluginVersionLabel: "v0.3.68"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
-  readonly property string measurementCsvFileName: "geology_measurements.csv"
-  property string lastMeasurementCsvPath: ""
+  readonly property string measurementGeoJsonFileName: "geology_measurements.geojson"
+  property string lastMeasurementGeoJsonPath: ""
 
   property string localityText: ""
   property string typeText: ""
@@ -1282,66 +1282,40 @@ Item {
     return projectDir + "/" + debugLogFileName;
   }
 
-  function measurementCsvPath() {
+  function measurementGeoJsonPath() {
     const projectDir = projectDirectoryPath();
     if (projectDir.length === 0) {
       return "";
     }
 
-    return projectDir + "/" + measurementCsvFileName;
+    return projectDir + "/" + measurementGeoJsonFileName;
   }
 
-  function measurementCsvHeaderFields() {
-    return [
-      "created_utc",
-      "mode",
-      "kind",
-      "structure_type",
-      "trend",
-      "plunge",
-      "dip_dir",
-      "dip_ang",
-      "azimuth",
-      "tilt",
-      "latitude",
-      "longitude",
-      "lat_wgs84",
-      "lon_wgs84",
-      "elevation",
-      "altitude",
-      "sensor",
-      "method",
-      "locality",
-      "geology",
-      "note",
-      "wkt"
-    ];
-  }
-
-  function csvEscape(value) {
+  function jsonEscape(value) {
     if (value === undefined || value === null) {
-      return "";
-    }
-    if (typeof value === "number" && isNaN(value)) {
       return "";
     }
 
     let text = String(value);
-    if (text.indexOf("\"") >= 0) {
-      text = text.replace(/"/g, "\"\"");
-    }
-    if (text.indexOf(",") >= 0 || text.indexOf("\"") >= 0 || text.indexOf("\n") >= 0 || text.indexOf("\r") >= 0) {
-      return "\"" + text + "\"";
-    }
+    text = text.replace(/\\/g, "\\\\");
+    text = text.replace(/"/g, "\\\"");
+    text = text.replace(/\r/g, "\\r");
+    text = text.replace(/\n/g, "\\n");
+    text = text.replace(/\t/g, "\\t");
     return text;
   }
 
-  function csvLine(values) {
-    let escapedValues = [];
-    for (let i = 0; i < values.length; ++i) {
-      escapedValues.push(csvEscape(values[i]));
+  function jsonValue(value) {
+    if (value === undefined || value === null) {
+      return "null";
     }
-    return escapedValues.join(",");
+    if (typeof value === "number") {
+      return isNaN(value) ? "null" : String(value);
+    }
+    if (typeof value === "boolean") {
+      return value ? "true" : "false";
+    }
+    return "\"" + jsonEscape(value) + "\"";
   }
 
   function pointWkt(longitude, latitude) {
@@ -1358,8 +1332,82 @@ Item {
     return latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
   }
 
-  function appendMeasurementCsv(values) {
-    const path = measurementCsvPath();
+  function measurementGeoJsonFeature(values) {
+    const longitude = values.longitude;
+    const latitude = values.latitude;
+    const properties = [
+      ["created_utc", values.createdUtc],
+      ["mode", values.mode],
+      ["kind", values.kind],
+      ["structure_type", values.structureType],
+      ["trend", values.trend],
+      ["plunge", values.plunge],
+      ["dip_dir", values.dipDir],
+      ["dip_ang", values.dipAng],
+      ["azimuth", values.azimuth],
+      ["tilt", values.tilt],
+      ["latitude", values.latitude],
+      ["longitude", values.longitude],
+      ["lat_wgs84", values.latitude],
+      ["lon_wgs84", values.longitude],
+      ["elevation", values.elevation],
+      ["altitude", values.elevation],
+      ["sensor", values.sensor],
+      ["method", values.method],
+      ["locality", values.locality],
+      ["geology", values.geology],
+      ["note", values.note],
+      ["wkt", pointWkt(longitude, latitude)]
+    ];
+
+    let lines = [];
+    lines.push("    {");
+    lines.push("      \"type\": \"Feature\",");
+    lines.push("      \"geometry\": {");
+    lines.push("        \"type\": \"Point\",");
+    lines.push("        \"coordinates\": [" + longitude + ", " + latitude + "]");
+    lines.push("      },");
+    lines.push("      \"properties\": {");
+    for (let i = 0; i < properties.length; ++i) {
+      const pair = properties[i];
+      const comma = i === properties.length - 1 ? "" : ",";
+      lines.push("        \"" + pair[0] + "\": " + jsonValue(pair[1]) + comma);
+    }
+    lines.push("      }");
+    lines.push("    }");
+    return lines.join("\n");
+  }
+
+  function emptyMeasurementGeoJsonContent() {
+    return "{\n"
+      + "  \"type\": \"FeatureCollection\",\n"
+      + "  \"features\": [\n"
+      + "  ]\n"
+      + "}\n";
+  }
+
+  function appendFeatureToGeoJsonContent(existing, featureText) {
+    let content = existing && existing.length > 0 ? existing : emptyMeasurementGeoJsonContent();
+    const closeIndex = content.lastIndexOf("]");
+    if (closeIndex < 0) {
+      content = emptyMeasurementGeoJsonContent();
+    }
+
+    const targetCloseIndex = content.lastIndexOf("]");
+    const beforeClose = content.substring(0, targetCloseIndex);
+    const afterClose = content.substring(targetCloseIndex);
+    const hasExistingFeatures = beforeClose.indexOf("\"type\": \"Feature\"") >= 0
+      || beforeClose.indexOf("\"type\":\"Feature\"") >= 0;
+    const separator = hasExistingFeatures ? ",\n" : "";
+    return beforeClose.replace(/\s*$/, "\n")
+      + separator
+      + featureText
+      + "\n"
+      + afterClose.replace(/^\s*/, "");
+  }
+
+  function appendMeasurementGeoJson(values) {
+    const path = measurementGeoJsonPath();
     if (path.length === 0) {
       return {
         ok: false,
@@ -1371,34 +1419,26 @@ Item {
       return {
         ok: false,
         path: path,
-        message: "QField could not build a safe CSV path inside the project directory."
+        message: "QField could not build a safe GeoJSON path inside the project directory."
       };
     }
 
     let existing = "";
-    let needsHeader = true;
     if (FileUtils.fileExists(path)) {
       existing = FileUtils.readFileContent(path);
-      needsHeader = existing.length === 0;
     }
 
-    let content = existing;
-    if (needsHeader) {
-      content += csvLine(measurementCsvHeaderFields()) + "\n";
-    } else if (content.length > 0 && content[content.length - 1] !== "\n") {
-      content += "\n";
-    }
-
-    content += csvLine(values) + "\n";
+    const featureText = measurementGeoJsonFeature(values);
+    const content = appendFeatureToGeoJsonContent(existing, featureText);
     if (!FileUtils.writeFileContent(path, content)) {
       return {
         ok: false,
         path: path,
-        message: "QField could not write the measurement CSV file."
+        message: "QField could not write the measurement GeoJSON file."
       };
     }
 
-    lastMeasurementCsvPath = path;
+    lastMeasurementGeoJsonPath = path;
     return {
       ok: true,
       path: path,
@@ -1494,19 +1534,19 @@ Item {
   }
 
   function openCompassFromMap() {
-    const csvPath = measurementCsvPath();
+    const geoJsonPath = measurementGeoJsonPath();
     appendDebugLog(
       "open requested projectPath=" + projectFilePath()
         + " projectDir=" + projectDirectoryPath()
-        + " csvPath=" + csvPath
+        + " geoJsonPath=" + geoJsonPath
     );
 
-    if (csvPath.length === 0) {
+    if (geoJsonPath.length === 0) {
       showAlert("QField could not determine the current project directory for writing measurements.");
       return;
     }
-    if (!FileUtils.isWithinProjectDirectory(csvPath)) {
-      showAlert("QField could not build a safe measurement CSV path inside the project directory.");
+    if (!FileUtils.isWithinProjectDirectory(geoJsonPath)) {
+      showAlert("QField could not build a safe measurement GeoJSON path inside the project directory.");
       return;
     }
 
@@ -1514,9 +1554,9 @@ Item {
     compassVisible = true;
     seedTypeForMode();
     requestDialPaints();
-    appendDebugLog("compass opened with csvPath=" + csvPath);
+    appendDebugLog("compass opened with geoJsonPath=" + geoJsonPath);
     logSensorSnapshot("open snapshot");
-    iface.mainWindow().displayToast("Measurements will be written to " + FileUtils.fileName(csvPath));
+    iface.mainWindow().displayToast("Measurements will be written to " + FileUtils.fileName(geoJsonPath));
   }
 
   function closeCompass() {
@@ -1647,14 +1687,14 @@ Item {
       ? frozenLongitude
       : positionLongitude(info);
     const elevation = measurementFrozen ? frozenElevation : currentElevationValue(info);
-    const csvPath = measurementCsvPath();
-    const csvLabel = csvPath.length > 0 ? FileUtils.fileName(csvPath) : measurementCsvFileName;
+    const geoJsonPath = measurementGeoJsonPath();
+    const geoJsonLabel = geoJsonPath.length > 0 ? FileUtils.fileName(geoJsonPath) : measurementGeoJsonFileName;
     const createdUtc = new Date().toISOString();
     const method = measurementMethodLabel();
 
     appendDebugLog(
       "save checked kind=" + measurementKind
-        + " csv=" + csvPath
+        + " geojson=" + geoJsonPath
         + " heading=" + debugValue(heading)
         + " tilt=" + debugValue(tilt)
         + " lat=" + debugValue(latitude)
@@ -1663,9 +1703,9 @@ Item {
         + " method=" + method
     );
 
-    if (csvPath.length === 0 || !FileUtils.isWithinProjectDirectory(csvPath)) {
-      appendDebugLog("save failed invalid csv path=" + csvPath);
-      iface.mainWindow().displayToast("No valid project folder is available for the CSV file");
+    if (geoJsonPath.length === 0 || !FileUtils.isWithinProjectDirectory(geoJsonPath)) {
+      appendDebugLog("save failed invalid geojson path=" + geoJsonPath);
+      iface.mainWindow().displayToast("No valid project folder is available for the GeoJSON file");
       return;
     }
 
@@ -1695,39 +1735,35 @@ Item {
     const plunge = measurementKind === "linear" ? tilt : null;
     const dipDir = measurementKind === "linear" ? null : heading;
     const dipAng = measurementKind === "linear" ? null : tilt;
-    const row = [
-      createdUtc,
-      measurementKind,
-      measurementKind,
-      activeStructureType(),
-      trend,
-      plunge,
-      dipDir,
-      dipAng,
-      heading,
-      tilt,
-      latitude,
-      longitude,
-      latitude,
-      longitude,
-      elevation,
-      elevation,
-      currentSensorTag(),
-      method,
-      localityText.trim(),
-      geologyText.trim(),
-      noteText.trim(),
-      pointWkt(longitude, latitude)
-    ];
+    const values = {
+      createdUtc: createdUtc,
+      mode: measurementKind,
+      kind: measurementKind,
+      structureType: activeStructureType(),
+      trend: trend,
+      plunge: plunge,
+      dipDir: dipDir,
+      dipAng: dipAng,
+      azimuth: heading,
+      tilt: tilt,
+      latitude: latitude,
+      longitude: longitude,
+      elevation: elevation,
+      sensor: currentSensorTag(),
+      method: method,
+      locality: localityText.trim(),
+      geology: geologyText.trim(),
+      note: noteText.trim()
+    };
 
-    appendDebugLog("save csv append begin path=" + csvPath);
-    const persisted = appendMeasurementCsv(row);
+    appendDebugLog("save geojson append begin path=" + geoJsonPath);
+    const persisted = appendMeasurementGeoJson(values);
     if (!persisted.ok) {
-      appendDebugLog("save csv append failed path=" + persisted.path + " message=" + persisted.message);
+      appendDebugLog("save geojson append failed path=" + persisted.path + " message=" + persisted.message);
       iface.mainWindow().displayToast(persisted.message);
       return;
     }
-    appendDebugLog("save csv append ok path=" + persisted.path);
+    appendDebugLog("save geojson append ok path=" + persisted.path);
 
     lastSavedLatitude = latitude;
     lastSavedLongitude = longitude;
@@ -1744,8 +1780,8 @@ Item {
         + " saveReady=" + saveReady
         + " visible=" + compassVisible
     );
-    appendDebugLog("save succeeded csv=" + persisted.path);
-    iface.mainWindow().displayToast("Saved measurement to " + csvLabel);
+    appendDebugLog("save succeeded geojson=" + persisted.path);
+    iface.mainWindow().displayToast("Saved measurement to " + geoJsonLabel);
   }
 
   function formattedWholeAngle(value) {
@@ -2550,7 +2586,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            text: "Output CSV: " + measurementCsvFileName
+            text: "Output GeoJSON: " + measurementGeoJsonFileName
             color: textMuted
             font.pixelSize: 12
           }

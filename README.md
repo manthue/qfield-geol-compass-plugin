@@ -1,6 +1,6 @@
 # Geo Compass QField Plugin
 
-This plugin is a QField app plugin for Android field mapping. It shows live device orientation readings in QField and can save those readings as planar or linear structural observations in a CSV file in the current project folder.
+This plugin is a QField app plugin for Android field mapping. It shows live device orientation readings in QField and can save those readings as planar or linear structural observations in a GeoJSON file in the current project folder.
 
 Historical packaged Geo Compass builds are kept in the release assets.
 
@@ -42,17 +42,17 @@ The plugin is designed for a simple in-field sequence:
 3. Align the phone with the structure.
 4. Tap `Freeze current reading` to freeze the readout.
 5. Optionally enter a locality, structure `type`, geology, and comment.
-6. Tap `Save` to append the frozen GNSS position and frozen orientation to `geology_measurements.csv`.
+6. Tap `Save` to append the frozen GNSS position and frozen orientation to `geology_measurements.geojson`.
 
 The save button only becomes active after a reading has been frozen successfully.
 
-## Measurement CSV
+## Measurement GeoJSON
 
 The plugin writes measurements to this file in the current QField project folder:
 
-- `geology_measurements.csv`
+- `geology_measurements.geojson`
 
-The CSV includes:
+Each saved measurement is a GeoJSON point feature. Feature properties include:
 
 - `mode` `Text`
 - `trend` `Real`
@@ -72,7 +72,7 @@ For linear measurements, `mode` is set to `linear`, `trend` and `plunge` are pop
 
 1. Zip the plugin files so that `main.qml` and `metadata.txt` are at the root of the zip.
 2. Install the zip from the QField plugin manager, or place it in the QField plugins directory as an app plugin.
-3. Open any saved QField project. Measurements are appended to `geology_measurements.csv` next to the project file.
+3. Open any saved QField project. Measurements are appended to `geology_measurements.geojson` next to the project file.
 
 ## Starter project
 
@@ -84,7 +84,7 @@ To use it as a QField project plugin, copy `main.qml` next to that project and r
 
 - `geo_compass_demo.qml`
 
-The starter project includes the map symbols used for planar and linear readings. Measurements captured by the plugin are written to `geology_measurements.csv` in the project folder.
+The starter project includes the map symbols used for planar and linear readings. Measurements captured by the plugin are written to `geology_measurements.geojson` in the project folder.
 
 ## Current capabilities
 
@@ -101,8 +101,8 @@ The starter project includes the map symbols used for planar and linear readings
 - This has not yet been device-tested in this workspace.
 - Sensor behavior depends on the Android device and how QField exposes IMU values on that device.
 - The live readout is still a device-sensor solution and should not be treated as survey-grade orientation without field validation.
-- The plugin currently saves measurements as CSV rows at the current GNSS position.
-- The CSV file name is fixed in `main.qml` as `geology_measurements.csv`.
+- The plugin currently saves measurements as GeoJSON point features at the current GNSS position.
+- The GeoJSON file name is fixed in `main.qml` as `geology_measurements.geojson`.
 
 ## Next improvements
 
