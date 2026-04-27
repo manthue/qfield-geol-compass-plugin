@@ -68,6 +68,8 @@ Each saved measurement is a GeoJSON point feature. Feature properties include:
 
 For linear measurements, `mode` is set to `linear`, `trend` and `plunge` are populated, and the planar fields are left blank. For planar measurements, `mode` is set to `planar`, `dip_dir` and `dip_ang` are populated, and the linear fields are left blank.
 
+If the project contains a layer named `geology_measurements` pointing to `geology_measurements.geojson`, the plugin reloads and repaints that layer after each save so new measurements can appear in the map and legend.
+
 ## Installation
 
 1. Zip the plugin files so that `main.qml` and `metadata.txt` are at the root of the zip.
