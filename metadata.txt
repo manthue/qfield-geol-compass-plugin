@@ -1,7 +1,7 @@
 [general]
 name=Geo Compass
-version=0.3.69
-description=Writes measurements to GeoJSON and refreshes the project GeoJSON layer.
+version=0.3.70
+description=Shows GeoJSON measurements with planar and linear categorized symbols.
 author=OpenAI Codex
 homepage=https://github.com/manthue/qfield-geol-compass-plugin
 icon=

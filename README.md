@@ -70,6 +70,8 @@ For linear measurements, `mode` is set to `linear`, `trend` and `plunge` are pop
 
 If the project contains a layer named `geology_measurements` pointing to `geology_measurements.geojson`, the plugin reloads and repaints that layer after each save so new measurements can appear in the map and legend.
 
+The bundled demo project keeps a hidden schema seed feature in the GeoJSON file so QField can recognize the point geometry and attributes before the first real measurement is saved. The layer is styled by `mode`, with separate planar and linear symbols.
+
 ## Installation
 
 1. Zip the plugin files so that `main.qml` and `metadata.txt` are at the root of the zip.

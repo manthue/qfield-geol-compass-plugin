@@ -37,7 +37,7 @@ Item {
   property bool hasRotationReading: false
   property bool hasAccelReading: false
   property string lastDebugLogPath: ""
-  readonly property string pluginVersionLabel: "v0.3.69"
+  readonly property string pluginVersionLabel: "v0.3.70"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
   readonly property string measurementGeoJsonFileName: "geology_measurements.geojson"
   property string lastMeasurementGeoJsonPath: ""
@@ -1597,6 +1597,9 @@ Item {
       if (layer) {
         callMember(layer, "reload");
         callMember(layer, "updateExtents");
+        const provider = memberValue(layer, "dataProvider");
+        callMember(provider, "forceReload");
+        callMember(provider, "reloadData");
       }
     } catch (error) {
       appendDebugLog("map refresh reload failed error=" + error);
