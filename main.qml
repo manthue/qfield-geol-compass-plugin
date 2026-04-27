@@ -37,8 +37,10 @@ Item {
   property bool hasRotationReading: false
   property bool hasAccelReading: false
   property string lastDebugLogPath: ""
-  readonly property string pluginVersionLabel: "v0.3.65"
+  readonly property string pluginVersionLabel: "v0.3.67"
   readonly property string debugLogFileName: "geo_compass_debug_log.txt"
+  readonly property string measurementCsvFileName: "geology_measurements.csv"
+  property string lastMeasurementCsvPath: ""
 
   property string localityText: ""
   property string typeText: ""
@@ -1280,6 +1282,130 @@ Item {
     return projectDir + "/" + debugLogFileName;
   }
 
+  function measurementCsvPath() {
+    const projectDir = projectDirectoryPath();
+    if (projectDir.length === 0) {
+      return "";
+    }
+
+    return projectDir + "/" + measurementCsvFileName;
+  }
+
+  function measurementCsvHeaderFields() {
+    return [
+      "created_utc",
+      "mode",
+      "kind",
+      "structure_type",
+      "trend",
+      "plunge",
+      "dip_dir",
+      "dip_ang",
+      "azimuth",
+      "tilt",
+      "latitude",
+      "longitude",
+      "lat_wgs84",
+      "lon_wgs84",
+      "elevation",
+      "altitude",
+      "sensor",
+      "method",
+      "locality",
+      "geology",
+      "note",
+      "wkt"
+    ];
+  }
+
+  function csvEscape(value) {
+    if (value === undefined || value === null) {
+      return "";
+    }
+    if (typeof value === "number" && isNaN(value)) {
+      return "";
+    }
+
+    let text = String(value);
+    if (text.indexOf("\"") >= 0) {
+      text = text.replace(/"/g, "\"\"");
+    }
+    if (text.indexOf(",") >= 0 || text.indexOf("\"") >= 0 || text.indexOf("\n") >= 0 || text.indexOf("\r") >= 0) {
+      return "\"" + text + "\"";
+    }
+    return text;
+  }
+
+  function csvLine(values) {
+    let escapedValues = [];
+    for (let i = 0; i < values.length; ++i) {
+      escapedValues.push(csvEscape(values[i]));
+    }
+    return escapedValues.join(",");
+  }
+
+  function pointWkt(longitude, latitude) {
+    if (isNaN(longitude) || isNaN(latitude)) {
+      return "";
+    }
+    return "POINT(" + longitude + " " + latitude + ")";
+  }
+
+  function hasValidWgs84Coordinates(longitude, latitude) {
+    if (isNaN(longitude) || isNaN(latitude)) {
+      return false;
+    }
+    return latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
+  }
+
+  function appendMeasurementCsv(values) {
+    const path = measurementCsvPath();
+    if (path.length === 0) {
+      return {
+        ok: false,
+        path: "",
+        message: "QField could not determine the current project directory for writing measurements."
+      };
+    }
+    if (!FileUtils.isWithinProjectDirectory(path)) {
+      return {
+        ok: false,
+        path: path,
+        message: "QField could not build a safe CSV path inside the project directory."
+      };
+    }
+
+    let existing = "";
+    let needsHeader = true;
+    if (FileUtils.fileExists(path)) {
+      existing = FileUtils.readFileContent(path);
+      needsHeader = existing.length === 0;
+    }
+
+    let content = existing;
+    if (needsHeader) {
+      content += csvLine(measurementCsvHeaderFields()) + "\n";
+    } else if (content.length > 0 && content[content.length - 1] !== "\n") {
+      content += "\n";
+    }
+
+    content += csvLine(values) + "\n";
+    if (!FileUtils.writeFileContent(path, content)) {
+      return {
+        ok: false,
+        path: path,
+        message: "QField could not write the measurement CSV file."
+      };
+    }
+
+    lastMeasurementCsvPath = path;
+    return {
+      ok: true,
+      path: path,
+      message: ""
+    };
+  }
+
   function debugValue(value) {
     if (value === undefined) {
       return "undefined";
@@ -1361,143 +1487,6 @@ Item {
     return authId;
   }
 
-  function persistentLayerBaseName(layerName) {
-    const rawName = layerName && layerName.length > 0 ? layerName : measurementLayerName;
-    const sanitizedName = FileUtils.sanitizeFilePathPart(rawName);
-    return sanitizedName.length > 0 ? sanitizedName : "geology_measurements";
-  }
-
-  function persistentLayerFilePath(layerName) {
-    const projectDir = projectDirectoryPath();
-    if (projectDir.length === 0) {
-      return "";
-    }
-
-    return projectDir + "/" + persistentLayerBaseName(layerName) + ".gpkg";
-  }
-
-  function packagedTemplateLayerPath() {
-    return resolvedLocalPath("measurement_layer_template.gpkg");
-  }
-
-  function loadPersistentMeasurementLayer(layerName, filePath) {
-    let loadedLayer = LayerUtils.loadVectorLayer(filePath + "|layername=" + layerName, layerName, "ogr");
-    if (!loadedLayer) {
-      loadedLayer = LayerUtils.loadVectorLayer(filePath, layerName, "ogr");
-    }
-
-    if (!loadedLayer) {
-      return {
-        layer: null,
-        message: "QField could not load measurement layer file '" + FileUtils.fileName(filePath) + "'."
-      };
-    }
-
-    const compatibilityMessage = compatibleLayerMessage(loadedLayer, missingRequiredFields(loadedLayer));
-    if (compatibilityMessage.length > 0) {
-      return {
-        layer: null,
-        message: compatibilityMessage
-      };
-    }
-
-    if (!ProjectUtils.addMapLayer(qgisProject, loadedLayer)) {
-      return {
-        layer: null,
-        message: "QField loaded a measurement layer file but could not add it to the current project."
-      };
-    }
-
-    try {
-      LayerUtils.setDefaultRenderer(loadedLayer, qgisProject);
-    } catch (error) {
-    }
-
-    return {
-      layer: loadedLayer,
-      message: ""
-    };
-  }
-
-  function createPersistentMeasurementLayer() {
-    const projectDir = projectDirectoryPath();
-    if (projectDir.length === 0) {
-      return {
-        layer: null,
-        message: "QField could not determine the current project directory for creating a measurement layer."
-      };
-    }
-
-    let candidateName = measurementLayerName;
-    let candidatePath = persistentLayerFilePath(candidateName);
-
-    if (candidatePath.length === 0 || !FileUtils.isWithinProjectDirectory(candidatePath)) {
-      return {
-        layer: null,
-        message: "QField could not build a safe file path for a measurement layer inside the project directory."
-      };
-    }
-
-    if (FileUtils.fileExists(candidatePath)) {
-      const loadedExistingLayer = loadPersistentMeasurementLayer(candidateName, candidatePath);
-      if (loadedExistingLayer.layer) {
-        return {
-          layer: loadedExistingLayer.layer,
-          message: "",
-          created: false
-        };
-      }
-    }
-
-    let suffix = 2;
-    while (layerByName(candidateName) || FileUtils.fileExists(candidatePath)) {
-      candidateName = measurementLayerName + "_" + suffix;
-      candidatePath = persistentLayerFilePath(candidateName);
-      suffix += 1;
-    }
-
-    if (candidatePath.length === 0 || !FileUtils.isWithinProjectDirectory(candidatePath)) {
-      return {
-        layer: null,
-        message: "QField could not build a safe file path for a new measurement layer inside the project directory."
-      };
-    }
-
-    const templatePath = packagedTemplateLayerPath();
-    if (!templatePath || templatePath.length === 0 || !FileUtils.fileExists(templatePath)) {
-      return {
-        layer: null,
-        message: "QField could not find the bundled measurement layer template."
-      };
-    }
-
-    const templateContent = FileUtils.readFileContent(templatePath);
-    if (!templateContent || templateContent.length === 0) {
-      return {
-        layer: null,
-        message: "QField could not read the bundled measurement layer template."
-      };
-    }
-
-    if (!FileUtils.writeFileContent(candidatePath, templateContent)) {
-      return {
-        layer: null,
-        message: "QField could not copy the measurement layer template into the project directory."
-      };
-    }
-
-    const loadedLayer = loadPersistentMeasurementLayer(candidateName, candidatePath);
-    if (!loadedLayer.layer) {
-      return loadedLayer;
-    }
-
-    return {
-      layer: loadedLayer.layer,
-      message: "",
-      created: true
-    };
-  }
-
   function showAlert(message) {
     appendDebugLog("alert message=" + message);
     noticeDialog.text = message;
@@ -1505,50 +1494,29 @@ Item {
   }
 
   function openCompassFromMap() {
-    appendDebugLog("open requested projectPath=" + projectFilePath() + " projectDir=" + projectDirectoryPath());
-    const result = findCompatibleMeasurementLayer();
-    appendDebugLog("layer lookup layerFound=" + Boolean(result.layer) + " message=" + result.message);
+    const csvPath = measurementCsvPath();
+    appendDebugLog(
+      "open requested projectPath=" + projectFilePath()
+        + " projectDir=" + projectDirectoryPath()
+        + " csvPath=" + csvPath
+    );
 
-    if (!result.layer) {
-      const creation = createPersistentMeasurementLayer();
-      if (!creation.layer) {
-        appendDebugLog("layer creation failed message=" + creation.message);
-        showAlert(result.message + "\n\n" + creation.message);
-        return;
-      }
-
-      targetMeasurementLayer = creation.layer;
-      const createdLayerName = layerNameValue(creation.layer);
-      if (createdLayerName.length > 0) {
-        measurementLayerName = createdLayerName;
-      }
-      compassVisible = true;
-      seedTypeForMode();
-      requestDialPaints();
-      appendDebugLog(
-        "compass opened with createdOrLoadedLayer="
-          + layerNameValue(creation.layer)
-          + " created=" + Boolean(creation.created)
-      );
-      logSensorSnapshot("open snapshot");
-      iface.mainWindow().displayToast(
-        creation.created
-          ? "Persistent measurement layer created and added to project"
-          : "Measurement layer loaded from project folder"
-      );
+    if (csvPath.length === 0) {
+      showAlert("QField could not determine the current project directory for writing measurements.");
+      return;
+    }
+    if (!FileUtils.isWithinProjectDirectory(csvPath)) {
+      showAlert("QField could not build a safe measurement CSV path inside the project directory.");
       return;
     }
 
-    targetMeasurementLayer = result.layer;
-    const resultLayerName = layerNameValue(result.layer);
-    if (resultLayerName.length > 0) {
-      measurementLayerName = resultLayerName;
-    }
+    targetMeasurementLayer = null;
     compassVisible = true;
     seedTypeForMode();
     requestDialPaints();
-    appendDebugLog("compass opened with existingLayer=" + layerNameValue(result.layer));
+    appendDebugLog("compass opened with csvPath=" + csvPath);
     logSensorSnapshot("open snapshot");
+    iface.mainWindow().displayToast("Measurements will be written to " + FileUtils.fileName(csvPath));
   }
 
   function closeCompass() {
@@ -1583,6 +1551,24 @@ Item {
   }
 
   function requestMapRefresh() {
+    const layer = targetMeasurementLayer ? targetMeasurementLayer : layerByName(measurementLayerName);
+
+    try {
+      if (layer) {
+        layer.triggerRepaint();
+      }
+    } catch (error) {
+      appendDebugLog("map refresh triggerRepaint failed error=" + error);
+    }
+
+    try {
+      const mapCanvas = iface.mapCanvas();
+      if (mapCanvas) {
+        mapCanvas.refresh(true);
+      }
+    } catch (error) {
+      appendDebugLog("map refresh canvas failed error=" + error);
+    }
   }
 
   function refreshMapForSavedMeasurement() {
@@ -1599,78 +1585,6 @@ Item {
     if (actualFieldName.length > 0) {
       feature.setAttribute(actualFieldName, value);
     }
-  }
-
-  function layerCommitErrorsText(layer) {
-    if (!layer) {
-      return "";
-    }
-
-    const errors = stringListValue(callMember(layer, "commitErrors"));
-    return errors.length > 0 ? errors.join(" | ") : "";
-  }
-
-  function persistFeatureToLayer(layer, feature) {
-    if (!layer || !feature) {
-      appendDebugLog("persist abort missing layer or feature");
-      return {
-        ok: false,
-        message: "Missing layer or feature while saving the measurement."
-      };
-    }
-
-    const wasEditable = Boolean(callMember(layer, "isEditable"));
-    appendDebugLog(
-      "persist begin layer=" + targetLayerLabel(layer)
-        + " wasEditable=" + wasEditable
-    );
-    if (!wasEditable && !callMember(layer, "startEditing")) {
-      appendDebugLog("persist failed startEditing layer=" + targetLayerLabel(layer));
-      return {
-        ok: false,
-        message: "Failed to start editing on layer " + targetLayerLabel(layer)
-      };
-    }
-    appendDebugLog("persist editing ready layer=" + targetLayerLabel(layer));
-
-    appendDebugLog("persist addFeature begin layer=" + targetLayerLabel(layer));
-    if (!LayerUtils.addFeature(layer, feature)) {
-      appendDebugLog("persist addFeature failed layer=" + targetLayerLabel(layer));
-      if (!wasEditable) {
-        callMember(layer, "rollBack");
-        appendDebugLog("persist rollBack after addFeature failure layer=" + targetLayerLabel(layer));
-      }
-      return {
-        ok: false,
-        message: "Failed to add the measurement feature to layer " + targetLayerLabel(layer)
-      };
-    }
-    appendDebugLog("persist addFeature ok layer=" + targetLayerLabel(layer));
-
-    appendDebugLog(
-      "persist commit begin layer=" + targetLayerLabel(layer)
-        + " stopEditing=" + (!wasEditable)
-    );
-    if (!callMember(layer, "commitChanges", !wasEditable)) {
-      const commitErrorsText = layerCommitErrorsText(layer);
-      appendDebugLog("persist commit failed layer=" + targetLayerLabel(layer) + " errors=" + commitErrorsText);
-      if (!wasEditable) {
-        callMember(layer, "rollBack");
-        appendDebugLog("persist rollBack after commit failure layer=" + targetLayerLabel(layer));
-      }
-      return {
-        ok: false,
-        message: commitErrorsText.length > 0
-          ? "Failed to commit the measurement to layer " + targetLayerLabel(layer) + ": " + commitErrorsText
-          : "Failed to commit the measurement to layer " + targetLayerLabel(layer)
-      };
-    }
-    appendDebugLog("persist commit ok layer=" + targetLayerLabel(layer));
-
-    return {
-      ok: true,
-      message: ""
-    };
   }
 
   function targetLayerLabel(layer) {
@@ -1733,36 +1647,30 @@ Item {
       ? frozenLongitude
       : positionLongitude(info);
     const elevation = measurementFrozen ? frozenElevation : currentElevationValue(info);
-    const geometry = geometryFromCoordinates(longitude, latitude);
-    const targetLayer = targetMeasurementLayer ? targetMeasurementLayer : layerByName(measurementLayerName);
-    const layerLabel = targetLayerLabel(targetLayer);
+    const csvPath = measurementCsvPath();
+    const csvLabel = csvPath.length > 0 ? FileUtils.fileName(csvPath) : measurementCsvFileName;
+    const createdUtc = new Date().toISOString();
+    const method = measurementMethodLabel();
 
     appendDebugLog(
       "save checked kind=" + measurementKind
-        + " layer=" + layerLabel
+        + " csv=" + csvPath
         + " heading=" + debugValue(heading)
         + " tilt=" + debugValue(tilt)
         + " lat=" + debugValue(latitude)
         + " lon=" + debugValue(longitude)
         + " elevation=" + debugValue(elevation)
-        + " method=" + measurementMethodLabel()
+        + " method=" + method
     );
 
-    if (!targetLayer) {
-      appendDebugLog("save failed missing layer");
-      iface.mainWindow().displayToast("Missing layer: " + measurementLayerName);
+    if (csvPath.length === 0 || !FileUtils.isWithinProjectDirectory(csvPath)) {
+      appendDebugLog("save failed invalid csv path=" + csvPath);
+      iface.mainWindow().displayToast("No valid project folder is available for the CSV file");
       return;
     }
 
-    const compatibilityMessage = compatibleLayerMessage(targetLayer, missingRequiredFields(targetLayer));
-    if (compatibilityMessage.length > 0) {
-      appendDebugLog("save failed incompatible layer message=" + compatibilityMessage);
-      iface.mainWindow().displayToast(compatibilityMessage);
-      return;
-    }
-
-    if (!geometry) {
-      appendDebugLog("save failed invalid geometry");
+    if (!hasValidWgs84Coordinates(longitude, latitude)) {
+      appendDebugLog("save failed invalid coordinates");
       iface.mainWindow().displayToast(
         measurementFrozen
           ? "No frozen GNSS position is available for this reading"
@@ -1783,99 +1691,61 @@ Item {
       return;
     }
 
-    appendDebugLog("save pre-create overlay stop begin visible=" + compassVisible);
-    compassVisible = false;
-    appendDebugLog("save pre-create overlay stop ok visible=" + compassVisible);
+    const trend = measurementKind === "linear" ? heading : null;
+    const plunge = measurementKind === "linear" ? tilt : null;
+    const dipDir = measurementKind === "linear" ? null : heading;
+    const dipAng = measurementKind === "linear" ? null : tilt;
+    const row = [
+      createdUtc,
+      measurementKind,
+      measurementKind,
+      activeStructureType(),
+      trend,
+      plunge,
+      dipDir,
+      dipAng,
+      heading,
+      tilt,
+      latitude,
+      longitude,
+      latitude,
+      longitude,
+      elevation,
+      elevation,
+      currentSensorTag(),
+      method,
+      localityText.trim(),
+      geologyText.trim(),
+      noteText.trim(),
+      pointWkt(longitude, latitude)
+    ];
 
-    appendDebugLog("save createBlankFeature begin layer=" + layerLabel);
-    let feature = FeatureUtils.createBlankFeature(layerFieldsValue(targetLayer), geometry);
-    appendDebugLog("save createBlankFeature ok layer=" + layerLabel);
-
-    appendDebugLog("save set attributes begin layer=" + layerLabel);
-    setAttributeIfPresent(feature, targetLayer, "mode", measurementKind);
-
-    if (measurementKind === "linear") {
-      setAttributeIfPresent(feature, targetLayer, "trend", heading);
-      setAttributeIfPresent(feature, targetLayer, "plunge", tilt);
-    } else {
-      setAttributeIfPresent(feature, targetLayer, "dip_dir", heading);
-      setAttributeIfPresent(feature, targetLayer, "dip_ang", tilt);
-    }
-
-    setAttributeIfPresent(feature, targetLayer, "kind", measurementKind);
-    setAttributeIfPresent(feature, targetLayer, "azimuth", heading);
-    setAttributeIfPresent(feature, targetLayer, "tilt", tilt);
-    setAttributeIfPresent(feature, targetLayer, "sensor", currentSensorTag());
-    setAttributeIfPresent(feature, targetLayer, "created_utc", new Date().toISOString());
-
-    if (!isNaN(latitude)) {
-      setAttributeIfPresent(feature, targetLayer, "latitude", latitude);
-      setAttributeIfPresent(feature, targetLayer, "lat_wgs84", latitude);
-    }
-
-    if (!isNaN(longitude)) {
-      setAttributeIfPresent(feature, targetLayer, "longitude", longitude);
-      setAttributeIfPresent(feature, targetLayer, "lon_wgs84", longitude);
-    }
-
-    if (!isNaN(elevation)) {
-      setAttributeIfPresent(feature, targetLayer, "elevation", elevation);
-      setAttributeIfPresent(feature, targetLayer, "altitude", elevation);
-    }
-    appendDebugLog("save set attributes ok layer=" + layerLabel + " sensor=" + currentSensorTag());
-
-    appendDebugLog("save featureModel reset begin layer=" + layerLabel);
-    measurementFeatureModel.reset();
-    measurementFeatureModel.currentLayer = targetLayer;
-    measurementFeatureModel.feature = feature;
-    appendDebugLog("save featureModel assigned layer=" + layerLabel);
-
-    appendDebugLog("save featureModel updateAttributes begin layer=" + layerLabel);
-    if (!measurementFeatureModel.updateAttributesFromFeature(feature)) {
-      appendDebugLog("save featureModel updateAttributes failed layer=" + layerLabel);
-      measurementFeatureModel.reset();
-      iface.mainWindow().displayToast("Failed to prepare attributes for layer " + layerLabel);
+    appendDebugLog("save csv append begin path=" + csvPath);
+    const persisted = appendMeasurementCsv(row);
+    if (!persisted.ok) {
+      appendDebugLog("save csv append failed path=" + persisted.path + " message=" + persisted.message);
+      iface.mainWindow().displayToast(persisted.message);
       return;
     }
-    appendDebugLog("save featureModel updateAttributes ok layer=" + layerLabel);
-
-    appendDebugLog("save featureModel changeGeometry begin layer=" + layerLabel);
-    if (!measurementFeatureModel.changeGeometry(geometry)) {
-      appendDebugLog("save featureModel changeGeometry failed layer=" + layerLabel);
-      measurementFeatureModel.reset();
-      iface.mainWindow().displayToast("Failed to prepare geometry for layer " + layerLabel);
-      return;
-    }
-    appendDebugLog("save featureModel changeGeometry ok layer=" + layerLabel);
-
-    appendDebugLog("save featureModel create begin layer=" + layerLabel);
-    if (!measurementFeatureModel.create(true)) {
-      appendDebugLog("save featureModel create failed layer=" + layerLabel);
-      measurementFeatureModel.reset();
-      iface.mainWindow().displayToast("Failed to create " + measurementKind + " measurement in layer " + layerLabel);
-      return;
-    }
-    appendDebugLog("save featureModel create ok layer=" + layerLabel);
-    appendDebugLog("save featureModel reset after create begin layer=" + layerLabel);
-    measurementFeatureModel.reset();
-    appendDebugLog("save featureModel reset after create ok layer=" + layerLabel);
+    appendDebugLog("save csv append ok path=" + persisted.path);
 
     lastSavedLatitude = latitude;
     lastSavedLongitude = longitude;
     appendDebugLog(
-      "save post-create state lat=" + debugValue(lastSavedLatitude)
+      "save post-write state lat=" + debugValue(lastSavedLatitude)
         + " lon=" + debugValue(lastSavedLongitude)
         + " frozen=" + measurementFrozen
         + " visible=" + compassVisible
     );
     clearFrozenMeasurement();
+    compassVisible = false;
     appendDebugLog(
       "save clear frozen ok frozen=" + measurementFrozen
         + " saveReady=" + saveReady
         + " visible=" + compassVisible
     );
-    appendDebugLog("save succeeded layer=" + layerLabel);
-    appendDebugLog("save success toast skipped");
+    appendDebugLog("save succeeded csv=" + persisted.path);
+    iface.mainWindow().displayToast("Saved measurement to " + csvLabel);
   }
 
   function formattedWholeAngle(value) {
@@ -2680,7 +2550,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            text: "Target layer: " + measurementLayerName
+            text: "Output CSV: " + measurementCsvFileName
             color: textMuted
             font.pixelSize: 12
           }

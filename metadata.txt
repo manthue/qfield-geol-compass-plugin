@@ -1,7 +1,7 @@
 [general]
 name=Geo Compass
-version=0.3.65
-description=Stops overlay before FeatureModel save and logs post-create cleanup.
+version=0.3.67
+description=Writes measurements to a project CSV file instead of a GeoPackage layer.
 author=OpenAI Codex
 homepage=https://github.com/manthue/qfield-geol-compass-plugin
 icon=

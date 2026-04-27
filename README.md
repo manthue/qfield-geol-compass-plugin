@@ -1,6 +1,6 @@
 # Geo Compass QField Plugin
 
-This plugin is a QField app plugin for Android field mapping. It shows live device orientation readings in QField and can save those readings as planar or linear structural observations in an existing vector layer.
+This plugin is a QField app plugin for Android field mapping. It shows live device orientation readings in QField and can save those readings as planar or linear structural observations in a CSV file in the current project folder.
 
 Historical packaged Geo Compass builds are kept in the release assets.
 
@@ -42,21 +42,17 @@ The plugin is designed for a simple in-field sequence:
 3. Align the phone with the structure.
 4. Tap `Freeze current reading` to freeze the readout.
 5. Optionally enter a locality, structure `type`, geology, and comment.
-6. Tap `Save` to write a point feature at the frozen GNSS position and frozen orientation.
+6. Tap `Save` to append the frozen GNSS position and frozen orientation to `geology_measurements.csv`.
 
 The save button only becomes active after a reading has been frozen successfully.
 
-## Required layers
+## Measurement CSV
 
-Load this existing point GeoPackage layer or equivalent editable vector layer into the QGIS project before opening it in QField.
+The plugin writes measurements to this file in the current QField project folder:
 
-### Shared measurement layer
+- `geology_measurements.csv`
 
-Layer name:
-
-- `geology_measurements`
-
-Recommended fields:
+The CSV includes:
 
 - `mode` `Text`
 - `trend` `Real`
@@ -66,20 +62,17 @@ Recommended fields:
 - `latitude` `Real`
 - `longitude` `Real`
 - `elevation` `Real`
+- `sensor` `Text`
+- `created_utc` `Text`
+- `wkt` `Text`
 
-For linear measurements, `mode` is set to `linear`, `trend` and `plunge` are populated, and the planar fields are cleared. For planar measurements, `mode` is set to `planar`, `dip_dir` and `dip_ang` are populated, and the linear fields are cleared.
-
-The plugin only requires the geometry plus these fields. If the layer includes additional optional fields, the plugin will still write them when present.
-
-## Storage note
-
-GeoPackage is recommended for mobile data capture. Shapefiles can work, but they are less robust on phones because all sidecar files must stay together and DBF field-name/type limits can make edits brittle.
+For linear measurements, `mode` is set to `linear`, `trend` and `plunge` are populated, and the planar fields are left blank. For planar measurements, `mode` is set to `planar`, `dip_dir` and `dip_ang` are populated, and the linear fields are left blank.
 
 ## Installation
 
 1. Zip the plugin files so that `main.qml` and `metadata.txt` are at the root of the zip.
 2. Install the zip from the QField plugin manager, or place it in the QField plugins directory as an app plugin.
-3. Open a project that contains an editable point layer named `geology_measurements`.
+3. Open any saved QField project. Measurements are appended to `geology_measurements.csv` next to the project file.
 
 ## Starter project
 
@@ -91,7 +84,7 @@ To use it as a QField project plugin, copy `main.qml` next to that project and r
 
 - `geo_compass_demo.qml`
 
-The starter project points to `geology_measurements.gpkg` and includes the map symbols used for planar and linear readings.
+The starter project includes the map symbols used for planar and linear readings. Measurements captured by the plugin are written to `geology_measurements.csv` in the project folder.
 
 ## Current capabilities
 
@@ -108,12 +101,12 @@ The starter project points to `geology_measurements.gpkg` and includes the map s
 - This has not yet been device-tested in this workspace.
 - Sensor behavior depends on the Android device and how QField exposes IMU values on that device.
 - The live readout is still a device-sensor solution and should not be treated as survey-grade orientation without field validation.
-- The plugin currently saves measurements as point features at the current GNSS position.
-- The layer name is still fixed in `main.qml` as `geology_measurements`.
+- The plugin currently saves measurements as CSV rows at the current GNSS position.
+- The CSV file name is fixed in `main.qml` as `geology_measurements.csv`.
 
 ## Next improvements
 
-- support user-configurable layer names and field names
+- support user-configurable output file and field names
 - add sensor accuracy or calibration warnings
 - add optional strike or right-hand-rule outputs for planes
 - make the target layer selection explicit and user-configurable
